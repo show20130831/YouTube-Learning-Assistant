@@ -14,9 +14,11 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from yla.analysis.analyzer import Analyzer
 from yla.config import DEFAULT_SETTINGS_PATH, AppSettings, Secrets, load_settings
 from yla.db.models import User, Video
 from yla.db.session import make_engine, session_scope
+from yla.llm.client import OpenRouterClient
 from yla.pipeline.discovery import DiscoveryReport, discover_videos
 from yla.sync import sync_config
 from yla.youtube.channels import resolve_missing_channel_ids
@@ -170,6 +172,58 @@ def worker_command(
         raise typer.Exit(code=2)
 
 
+def _openrouter_key_or_exit(settings: AppSettings) -> str:
+    api_key = Secrets().openrouter_api_key
+    if api_key is None:
+        raise _fail("OPENROUTER_API_KEY is not set (see .env.example)")
+    if not settings.llm.models:
+        raise _fail("No LLM model configured: set llm.primary_model in settings.yaml")
+    return api_key.get_secret_value()
+
+
+def _build_analyzer(settings: AppSettings, api_key: str, client: httpx.Client) -> Analyzer:
+    return Analyzer(
+        OpenRouterClient(api_key, client),
+        settings.llm.models,
+        settings.topics,
+        max_input_chars=settings.llm.max_input_chars,
+    )
+
+
+@app.command("run")
+def run_command(
+    skip_discover: Annotated[bool, typer.Option("--skip-discover", help="Do not read RSS first")] = False,
+    path: SettingsPath = DEFAULT_SETTINGS_PATH,
+) -> None:
+    """Daily pipeline: discover, grade content, analyse up to the daily limit, defer the rest."""
+    from yla.pipeline.daily import run_daily_pipeline
+
+    settings = _load_settings_or_exit(path)
+    api_key = _openrouter_key_or_exit(settings)
+    with _db_session() as session, httpx.Client(timeout=180) as client:
+        user = _user_or_exit(session)
+        report = run_daily_pipeline(
+            session,
+            user,
+            settings,
+            _build_analyzer(settings, api_key, client),
+            now=datetime.now(UTC),
+            feed_fetcher=None if skip_discover else HttpFeedFetcher(client),
+        )
+
+    typer.echo(f"Daily pipeline {report.run_id}")
+    typer.echo(f"  new videos:  {report.discovered}")
+    typer.echo(f"  analysed:    {len(report.analyzed)}  ({report.llm_calls} LLM requests)")
+    typer.echo(f"  unavailable: {len(report.unavailable)}")
+    typer.echo(f"  deferred:    {len(report.deferred)}")
+    if report.failed or report.expired:
+        _warn(f"  failed: {len(report.failed)}, expired: {len(report.expired)}")
+    for handle, error in report.feed_errors.items():
+        _warn(f"  feed failed: {handle}: {error}")
+    if report.quota_exhausted:
+        _warn("  OpenRouter free quota appears used up; remaining videos were deferred to tomorrow.")
+
+
 @app.command("analyze")
 def analyze_command(
     video_id: Annotated[str, typer.Argument(help="YouTube video ID already in the database")],
@@ -178,18 +232,13 @@ def analyze_command(
     path: SettingsPath = DEFAULT_SETTINGS_PATH,
 ) -> None:
     """Analyse one video with the LLM (uses stored captions, else title + description)."""
-    from yla.analysis.analyzer import AnalysisFailed, Analyzer, store_analysis
+    from yla.analysis.analyzer import AnalysisFailed, store_analysis
     from yla.content.tiering import choose_content
     from yla.db.models import Channel
-    from yla.llm.client import OpenRouterClient
     from yla.youtube.transcripts import DatabaseTranscriptProvider
 
     settings = _load_settings_or_exit(path)
-    api_key = Secrets().openrouter_api_key
-    if api_key is None:
-        raise _fail("OPENROUTER_API_KEY is not set (see .env.example)")
-    if not settings.llm.models:
-        raise _fail("No LLM model configured: set llm.primary_model in settings.yaml")
+    api_key = _openrouter_key_or_exit(settings)
 
     with _db_session() as session, httpx.Client(timeout=180) as client:
         user = _user_or_exit(session)
@@ -207,12 +256,7 @@ def analyze_command(
             _warn(f"{video_id}: not enough text to summarise (unavailable)")
             raise typer.Exit(code=1)
 
-        analyzer = Analyzer(
-            OpenRouterClient(api_key.get_secret_value(), client),
-            settings.llm.models,
-            settings.topics,
-            max_input_chars=settings.llm.max_input_chars,
-        )
+        analyzer = _build_analyzer(settings, api_key, client)
         try:
             outcome = analyzer.analyze(
                 title=video.title, channel=(channel.title or channel.handle) if channel else "", tier=tier

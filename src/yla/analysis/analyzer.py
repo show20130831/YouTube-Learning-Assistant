@@ -23,7 +23,7 @@ from yla.analysis.topics import TopicMatcher
 from yla.config import TopicConfig
 from yla.content.tiering import ContentTier
 from yla.db.models import Analysis, SourceType, UserVideoRelevance, Video, VideoStatus
-from yla.llm.client import ChatMessage, LLMClient, LLMError, LLMOutputInvalid
+from yla.llm.client import ChatMessage, LLMClient, LLMError, LLMOutputInvalid, LLMRateLimited
 from yla.llm.prompts import PROMPT_VERSION, build_messages
 from yla.llm.schemas import ANALYSIS_JSON_SCHEMA, ANALYSIS_SCHEMA_NAME, VideoAnalysis, normalize
 
@@ -31,10 +31,12 @@ logger = logging.getLogger(__name__)
 
 
 class AnalysisFailed(Exception):
-    def __init__(self, errors: dict[str, str], calls: int) -> None:
+    def __init__(self, errors: dict[str, str], calls: int, *, rate_limited: bool = False) -> None:
         super().__init__("; ".join(f"{model}: {error}" for model, error in errors.items()))
         self.errors = errors
         self.calls = calls
+        # Every model answered 429: the free daily quota is most likely used up for today.
+        self.rate_limited = rate_limited
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,7 @@ class Analyzer:
 
         calls = 0
         errors: dict[str, str] = {}
+        rate_limited: set[str] = set()
         for model in self._models:
             attempt_messages = list(messages)
             for attempt in (1, 2):
@@ -102,6 +105,8 @@ class Analyzer:
                     break
                 except LLMError as exc:
                     errors[model] = f"{type(exc).__name__}: {exc}"
+                    if isinstance(exc, LLMRateLimited):
+                        rate_limited.add(model)
                     break
 
                 analysis = normalize(
@@ -123,7 +128,7 @@ class Analyzer:
                     errors=errors,
                 )
             logger.warning("model %s failed: %s", model, errors.get(model))
-        raise AnalysisFailed(errors, calls)
+        raise AnalysisFailed(errors, calls, rate_limited=rate_limited == set(self._models))
 
     def _reconcile_topics(self, analysis: VideoAnalysis, title: str) -> VideoAnalysis:
         """Add topics found deterministically in keywords, concepts and the title, and keep the
