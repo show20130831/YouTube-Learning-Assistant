@@ -1,0 +1,41 @@
+# Copy this file to config/settings.yaml and edit it. config/settings.yaml is git-ignored.
+# Credentials (API keys, LINE user ID) go in .env, not here.
+
+user:
+  timezone: Asia/Taipei
+  notify_time: "12:00"      # informational in v1; the actual time is set by the Modal cron
+  daily_video_limit: 5      # keep low: OpenRouter free models allow ~50 requests/day
+  include_shorts: false
+  defer_max_days: 3
+
+channels:
+  - handle: DeepLearningAI
+  - handle: LangChain
+  - handle: AssemblyAI
+  - handle: AndrejKarpathy
+  - handle: statquest
+
+topics:
+  - name: AI Agent
+    aliases: [Agents, Agentic AI, AI Agents]
+  - name: LLM
+    aliases: [Large Language Model, Large Language Models]
+  - name: RAG
+    aliases: [Retrieval-Augmented Generation, Retrieval Augmented Generation]
+  - name: LangChain
+  - name: LangGraph
+  - name: FastAPI
+  - name: Data Engineering
+  - name: Machine Learning
+    aliases: [ML]
+  - name: Bioinformatics
+
+content:
+  min_description_chars: 150
+  long_video_threshold_minutes: 120
+  max_chunks: 6
+
+llm:
+  # Pick long-context free models from https://openrouter.ai/models?max_price=0
+  primary_model: null
+  fallback_models: []
