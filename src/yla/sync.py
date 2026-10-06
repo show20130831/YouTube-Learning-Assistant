@@ -21,6 +21,7 @@ class SyncReport:
     channels_added: list[str] = field(default_factory=list)
     channels_enabled: list[str] = field(default_factory=list)
     channels_disabled: list[str] = field(default_factory=list)
+    channel_ids_set: list[str] = field(default_factory=list)
     topics_added: list[str] = field(default_factory=list)
     topics_disabled: list[str] = field(default_factory=list)
 
@@ -69,19 +70,23 @@ def _sync_channels(session: Session, user: User, settings: AppSettings, report: 
 
     for key, cfg in wanted.items():
         if key in subs:
-            _, sub = subs[key]
+            channel, sub = subs[key]
             if sub.enabled != cfg.enabled:
                 sub.enabled = cfg.enabled
                 (report.channels_enabled if cfg.enabled else report.channels_disabled).append(cfg.handle)
-            continue
+        else:
+            existing = session.scalars(select(Channel).where(func.lower(Channel.handle) == key)).first()
+            channel = existing or Channel(handle=cfg.handle)
+            if existing is None:
+                session.add(channel)
+                session.flush()
+            session.add(Subscription(user_id=user.id, channel_id=channel.id, enabled=cfg.enabled))
+            report.channels_added.append(cfg.handle)
 
-        channel = session.scalars(select(Channel).where(func.lower(Channel.handle) == key)).first()
-        if channel is None:
-            channel = Channel(handle=cfg.handle)
-            session.add(channel)
-            session.flush()
-        session.add(Subscription(user_id=user.id, channel_id=channel.id, enabled=cfg.enabled))
-        report.channels_added.append(cfg.handle)
+        # An explicit channel_id in the YAML always wins over a stored (e.g. resolved) one.
+        if cfg.channel_id and channel.youtube_channel_id != cfg.channel_id:
+            channel.youtube_channel_id = cfg.channel_id
+            report.channel_ids_set.append(cfg.handle)
 
     for key, (channel, sub) in subs.items():
         if key not in wanted and sub.enabled:

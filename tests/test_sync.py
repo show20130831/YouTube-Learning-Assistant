@@ -142,3 +142,19 @@ def test_cli_sync_config_writes_to_database(
     finally:
         with engine.begin() as conn:  # this test commits, so clean up explicitly
             conn.execute(text("TRUNCATE users, channels RESTART IDENTITY CASCADE"))
+
+
+def test_channel_id_from_yaml_is_stored_and_updated(session: Session) -> None:
+    sync_config(session, settings([{"handle": "LangChain"}]))
+    assert session.scalars(select(Channel.youtube_channel_id)).one() is None
+
+    report = sync_config(
+        session, settings([{"handle": "LangChain", "channel_id": "UCC-lyoTfSrcJzA1ab3APAgw"}])
+    )
+    assert report.channel_ids_set == ["LangChain"]
+    assert session.scalars(select(Channel.youtube_channel_id)).one() == "UCC-lyoTfSrcJzA1ab3APAgw"
+
+    # Omitting channel_id later keeps the stored one (e.g. one filled in by a resolver).
+    report = sync_config(session, settings([{"handle": "LangChain"}]))
+    assert report.channel_ids_set == []
+    assert session.scalars(select(Channel.youtube_channel_id)).one() == "UCC-lyoTfSrcJzA1ab3APAgw"

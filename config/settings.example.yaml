@@ -8,12 +8,19 @@ user:
   include_shorts: false
   defer_max_days: 3
 
+# channel_id is the UC... ID from the channel URL (youtube.com/channel/UC...).
+# Channels without it are skipped until automatic handle lookup is added.
 channels:
   - handle: DeepLearningAI
+    channel_id: UCcIXc5mJsHVYTZR1maL5l9w
   - handle: LangChain
+    channel_id: UCC-lyoTfSrcJzA1ab3APAgw
   - handle: AssemblyAI
+    channel_id: UCtatfZMf-8EkIwASXM4ts0A
   - handle: AndrejKarpathy
+    channel_id: UCXUPKJO5MZQN11PqgIvyuvQ
   - handle: statquest
+    channel_id: UCtYLUTtgS3k1Fg4y5tAhLbw
 
 topics:
   - name: AI Agent

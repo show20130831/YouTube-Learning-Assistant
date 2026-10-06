@@ -54,6 +54,9 @@ class UserSettings(_Strict):
 
 class ChannelConfig(_Strict):
     handle: str = Field(min_length=1)
+    # Optional for now. When missing, the channel is skipped until a ChannelResolver (planned:
+    # YouTube Data API ``channels.list(forHandle=...)``) fills it in. See yla.youtube.channels.
+    channel_id: str | None = Field(default=None, pattern=r"^UC[\w-]{22}$")
     enabled: bool = True
 
     @field_validator("handle")
@@ -96,6 +99,9 @@ class AppSettings(_Strict):
         handles = [c.handle.casefold() for c in self.channels]
         if dupes := {h for h in handles if handles.count(h) > 1}:
             raise ValueError(f"duplicate channel handles: {sorted(dupes)}")
+        ids = [c.channel_id for c in self.channels if c.channel_id]
+        if dupes := {i for i in ids if ids.count(i) > 1}:
+            raise ValueError(f"duplicate channel ids: {sorted(dupes)}")
 
         seen: dict[str, str] = {}
         for topic in self.topics:

@@ -82,3 +82,19 @@ def test_cli_validate_config_invalid(tmp_path: Path) -> None:
     bad.write_text("channels: []\n", encoding="utf-8")
     result = CliRunner().invoke(app, ["validate-config", "--path", str(bad)])
     assert result.exit_code == 1
+
+
+def test_channel_id_is_optional_but_validated() -> None:
+    assert make(channels=[{"handle": "x"}]).channels[0].channel_id is None
+    with pytest.raises(ValidationError):
+        make(channels=[{"handle": "x", "channel_id": "not-a-channel-id"}])
+
+
+def test_duplicate_channel_ids_rejected() -> None:
+    cid = "UCC-lyoTfSrcJzA1ab3APAgw"
+    with pytest.raises(ValidationError, match="duplicate channel ids"):
+        make(channels=[{"handle": "a", "channel_id": cid}, {"handle": "b", "channel_id": cid}])
+
+
+def test_example_settings_have_channel_ids() -> None:
+    assert all(c.channel_id for c in load_settings(EXAMPLE).channels)
