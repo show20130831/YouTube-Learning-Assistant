@@ -243,6 +243,8 @@ class Digest(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     digest_date: Mapped[date] = mapped_column(Date)
     status: Mapped[DigestStatus] = mapped_column(_enum(DigestStatus), default=DigestStatus.PENDING)
+    # Sent as LINE's X-Line-Retry-Key: re-pushing with the same key never delivers twice.
+    retry_key: Mapped[str | None] = mapped_column(String(36))
     message_text: Mapped[str | None] = mapped_column(Text)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)

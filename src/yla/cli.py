@@ -224,6 +224,44 @@ def run_command(
         _warn("  OpenRouter free quota appears used up; remaining videos were deferred to tomorrow.")
 
 
+@app.command("digest")
+def digest_command(
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print the LINE messages without sending or saving")
+    ] = False,
+) -> None:
+    """Send today's study digest to LINE (at most once per day)."""
+    from yla.notify.line import LineNotifier
+    from yla.pipeline.digest import collect_digest, send_digest
+
+    secrets = Secrets()
+    with _db_session() as session:
+        user = _user_or_exit(session)
+        now = datetime.now(UTC)
+        if dry_run:
+            from yla.notify.formatter import build_messages
+
+            messages = build_messages(collect_digest(session, user, now=now))
+            session.rollback()
+            for i, message in enumerate(messages, 1):
+                typer.echo(f"----- message {i}/{len(messages)} -----")
+                typer.echo(message)
+            return
+
+        token, to = secrets.line_channel_access_token, user.line_user_id or secrets.line_user_id
+        if token is None or not to:
+            raise _fail("LINE_CHANNEL_ACCESS_TOKEN and LINE_USER_ID must be set (see .env.example)")
+        with httpx.Client(timeout=30) as client:
+            outcome = send_digest(session, user, LineNotifier(token.get_secret_value(), to, client), now=now)
+
+    if outcome.status == "already_sent":
+        typer.echo(f"Digest for {outcome.day} was already sent; nothing to do.")
+    elif outcome.status == "failed":
+        raise _fail(f"Digest for {outcome.day} could not be sent: {outcome.error}")
+    else:
+        typer.echo(f"Sent digest for {outcome.day} ({len(outcome.messages)} messages).")
+
+
 @app.command("analyze")
 def analyze_command(
     video_id: Annotated[str, typer.Argument(help="YouTube video ID already in the database")],
