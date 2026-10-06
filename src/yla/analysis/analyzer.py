@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from yla.analysis.topics import TopicMatcher
 from yla.config import TopicConfig
 from yla.content.tiering import ContentTier
 from yla.db.models import Analysis, SourceType, UserVideoRelevance, Video, VideoStatus
@@ -47,8 +48,8 @@ class AnalysisOutcome:
     errors: dict[str, str] = field(default_factory=dict)  # models that failed before one succeeded
 
 
-def topic_lookup(topics: Sequence[TopicConfig]) -> dict[str, str]:
-    return {term.casefold(): t.name for t in topics for term in t.all_names()}
+MIN_SCORE_WITH_TOPICS = 40
+MAX_SCORE_WITHOUT_TOPICS = 20
 
 
 class Analyzer:
@@ -65,7 +66,7 @@ class Analyzer:
         self._client = client
         self._models = list(models)
         self._topics = list(topics)
-        self._lookup = topic_lookup(topics)
+        self._matcher = TopicMatcher(topics)
         self._max_input_chars = max_input_chars
 
     def analyze(self, *, title: str, channel: str, tier: ContentTier) -> AnalysisOutcome:
@@ -105,9 +106,10 @@ class Analyzer:
 
                 analysis = normalize(
                     parsed,
-                    topic_lookup=self._lookup,
+                    topic_lookup=self._matcher.lookup,
                     topic_guess=tier.source_type is SourceType.TITLE_DESCRIPTION,
                 )
+                analysis = self._reconcile_topics(analysis, title)
                 if truncated and not analysis.limitation:
                     analysis = analysis.model_copy(update={"limitation": "內容過長，只分析了前段。"})
                 errors.pop(model, None)
@@ -122,6 +124,18 @@ class Analyzer:
                 )
             logger.warning("model %s failed: %s", model, errors.get(model))
         raise AnalysisFailed(errors, calls)
+
+    def _reconcile_topics(self, analysis: VideoAnalysis, title: str) -> VideoAnalysis:
+        """Add topics found deterministically in keywords, concepts and the title, and keep the
+        score consistent with them. Free models pick topics inconsistently between runs."""
+        found = [
+            *self._matcher.from_terms([*analysis.keywords, *(c.term for c in analysis.key_concepts)]),
+            *self._matcher.from_text(title),
+        ]
+        topics = list(dict.fromkeys([*analysis.matched_topics, *found]))
+        score = analysis.relevance_score
+        score = max(score, MIN_SCORE_WITH_TOPICS) if topics else min(score, MAX_SCORE_WITHOUT_TOPICS)
+        return analysis.model_copy(update={"matched_topics": topics, "relevance_score": score})
 
 
 def _fix_request(error: Exception) -> ChatMessage:

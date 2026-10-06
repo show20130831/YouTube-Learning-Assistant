@@ -24,7 +24,7 @@ channels:
 
 topics:
   - name: AI Agent
-    aliases: [Agents, Agentic AI, AI Agents]
+    aliases: [Agent, Agents, Agentic AI, AI Agents]
   - name: LLM
     aliases: [Large Language Model, Large Language Models]
   - name: RAG

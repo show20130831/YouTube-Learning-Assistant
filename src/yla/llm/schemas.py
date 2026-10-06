@@ -7,9 +7,43 @@ model that returns 7 key points costs a trim, not another request against the fr
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# A mechanical "可能 " / "推測：" prefix on topic-guess points: the warning shown above them already
+# says the content is a guess. Natural phrasing such as "可能介紹……" has no separator and is kept.
+_GUESS_PREFIX = re.compile(r"^(?:可能|推測)[\s:：,，、]+")
+
+# An English term followed by a full-width bracket gloss, e.g. "AI Agent（AI Agent）".
+_ENGLISH_WITH_GLOSS = re.compile(r"([A-Za-z][A-Za-z0-9 .\-]*)（([^（）]+)）")
+
+
+def drop_repeated_gloss(text: str) -> str:
+    """ "AI Agent（AI Agent）" -> "AI Agent". Real glosses like "技能（Skill）" are left alone."""
+
+    def replace(match: re.Match[str]) -> str:
+        term, gloss = match.group(1), match.group(2).strip()
+        return term if term.strip().casefold().endswith(gloss.casefold()) else match.group(0)
+
+    return _ENGLISH_WITH_GLOSS.sub(replace, text)
+
+
+# "大型語言模型 (Large Language Model)" -> "大型語言模型（Large Language Model）"
+_HALF_WIDTH_GLOSS = re.compile(r"([㐀-鿿])\s*\(\s*([A-Za-z][^()]*?)\s*\)")
+_WRAPPING_QUOTES = (("「", "」"), ("“", "”"), ('"', '"'), ("『", "』"))
+
+
+def tidy_text(text: str) -> str:
+    """Small, deterministic style fixes the prompt cannot guarantee with free models."""
+    text = text.strip()
+    for left, right in _WRAPPING_QUOTES:
+        if len(text) > 2 and text.startswith(left) and text.endswith(right) and text.count(left) == 1:
+            text = text[1:-1].strip()
+    text = _HALF_WIDTH_GLOSS.sub(r"\1（\2）", text)
+    return drop_repeated_gloss(text)
+
 
 MAX_KEY_POINTS = 6
 MAX_KEY_POINTS_TOPIC_GUESS = 3
@@ -103,11 +137,12 @@ def normalize(analysis: VideoAnalysis, *, topic_lookup: dict[str, str], topic_gu
         if t.strip().casefold() in topic_lookup
     ]
     limitation = (analysis.limitation or "").strip() or None
+    points = [tidy_text(p) for p in analysis.key_points]
+    if topic_guess:
+        points = [_GUESS_PREFIX.sub("", p.strip()) for p in points]
     return VideoAnalysis(
-        one_line_summary=analysis.one_line_summary.strip(),
-        key_points=_clean_list(
-            analysis.key_points, MAX_KEY_POINTS_TOPIC_GUESS if topic_guess else MAX_KEY_POINTS
-        ),
+        one_line_summary=tidy_text(analysis.one_line_summary),
+        key_points=_clean_list(points, MAX_KEY_POINTS_TOPIC_GUESS if topic_guess else MAX_KEY_POINTS),
         key_concepts=concepts,
         keywords=_clean_list(analysis.keywords, MAX_KEYWORDS),
         matched_topics=_clean_list(topics, len(topics)),

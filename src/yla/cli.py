@@ -174,6 +174,7 @@ def worker_command(
 def analyze_command(
     video_id: Annotated[str, typer.Argument(help="YouTube video ID already in the database")],
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the result without saving")] = False,
+    raw: Annotated[bool, typer.Option("--raw", help="Also print the model's original JSON")] = False,
     path: SettingsPath = DEFAULT_SETTINGS_PATH,
 ) -> None:
     """Analyse one video with the LLM (uses stored captions, else title + description)."""
@@ -236,6 +237,10 @@ def analyze_command(
     typer.echo(f"[model {outcome.model}, {outcome.calls} request(s){', not saved' if dry_run else ''}]")
     for model, error in outcome.errors.items():
         _warn(f"  {model} failed first: {error}")
+    if raw:
+        import json
+
+        typer.echo(json.dumps(outcome.raw, ensure_ascii=False, indent=2))
 
 
 def _check_network(session: Session, provider: YouTubeTranscriptProvider, video_id: str | None) -> None:

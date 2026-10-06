@@ -18,6 +18,7 @@ from yla.content.tiering import ContentTier
 from yla.db.models import Analysis, Channel, SourceType, User, UserVideoRelevance, Video, VideoStatus
 from yla.llm.client import OPENROUTER_URL, ChatMessage, LLMError, LLMRateLimited, LLMResponse
 from yla.llm.prompts import PROMPT_VERSION, SYSTEM_PROMPT, build_messages
+from yla.llm.schemas import drop_repeated_gloss, tidy_text
 from yla.sync import sync_config
 
 TOPICS = [
@@ -183,15 +184,21 @@ def test_store_analysis_saves_history_and_upserts_relevance(session: Session) ->
     user_id = session.scalars(select(User.id)).one()
     first = analyzer(FakeLLM({"primary": [good()]})).analyze(title="T", channel="C", tier=GUESS)
     store_analysis(session, video=video, user_id=user_id, outcome=first)
-    second = analyzer(FakeLLM({"primary": [good(relevance_score=40, matched_topics=["RAG"])]})).analyze(
-        title="T", channel="C", tier=CAPTIONS
-    )
+    second = analyzer(
+        FakeLLM(
+            {
+                "primary": [
+                    good(relevance_score=45, matched_topics=["RAG"], keywords=["Chunking"], key_concepts=[])
+                ]
+            }
+        )
+    ).analyze(title="T", channel="C", tier=CAPTIONS)
     store_analysis(session, video=video, user_id=user_id, outcome=second)
 
     rows = session.scalars(select(Analysis).order_by(Analysis.id)).all()
     assert [(r.confidence_level, r.confidence_stars) for r in rows] == [(1, "⭐"), (2, "⭐⭐")]
     relevance = session.scalars(select(UserVideoRelevance)).one()
-    assert (relevance.relevance_score, relevance.matched_topics) == (40, ["RAG"])
+    assert (relevance.relevance_score, relevance.matched_topics) == (45, ["RAG"])
     assert video.status is VideoStatus.ANALYZED
 
 
@@ -225,12 +232,13 @@ def test_cli_analyze(cli_db: tuple[Engine, Path], dry_run: bool) -> None:
     respx.post(OPENROUTER_URL).respond(
         200, json={"model": "m:free", "choices": [{"message": {"content": json.dumps(good())}}]}
     )
-    args = ["analyze", "vid1", "--path", str(settings)] + (["--dry-run"] if dry_run else [])
+    args = ["analyze", "vid1", "--path", str(settings)] + (["--dry-run", "--raw"] if dry_run else [])
     result = CliRunner().invoke(cli.app, args)
 
     assert result.exit_code == 0, result.output
     assert "摘要信心：⭐" in result.output
     assert "僅為主題推測" in result.output
+    assert ('"relevance_score": 140' in result.output) is dry_run  # --raw shows the unnormalized reply
     with Session(engine) as db:
         assert len(db.scalars(select(Analysis)).all()) == (0 if dry_run else 1)
 
@@ -250,3 +258,101 @@ def test_cli_analyze_reports_when_all_models_fail(cli_db: tuple[Engine, Path]) -
     result = CliRunner().invoke(cli.app, ["analyze", "vid1", "--path", str(cli_db[1])])
     assert result.exit_code == 1
     assert "All models failed" in result.output
+
+
+@pytest.mark.parametrize(
+    ("point", "expected"),
+    [
+        ("可能 Zip 原先自行開發 LLM 呼叫", "Zip 原先自行開發 LLM 呼叫"),
+        ("可能：導入 LangGraph 後的變化", "導入 LangGraph 後的變化"),
+        ("推測，其他團隊也採用", "其他團隊也採用"),
+        ("可能介紹 LangSmith 的追蹤功能", "可能介紹 LangSmith 的追蹤功能"),  # natural phrasing kept
+    ],
+)
+def test_mechanical_guess_prefix_removed_from_topic_guess_points(point: str, expected: str) -> None:
+    llm = FakeLLM({"primary": [good(key_points=[point])]})
+    assert analyzer(llm).analyze(title="T", channel="C", tier=GUESS).analysis.key_points == [expected]
+
+
+def test_guess_prefix_kept_for_caption_based_points() -> None:
+    llm = FakeLLM({"primary": [good(key_points=["可能 需要重試"])]})
+    assert analyzer(llm).analyze(title="T", channel="C", tier=CAPTIONS).analysis.key_points == [
+        "可能 需要重試"
+    ]
+
+
+def test_prompt_asks_for_bilingual_terms_and_natural_guess_wording() -> None:
+    assert "漸進式披露（Progressive Disclosure）" in SYSTEM_PROMPT
+    assert "key_concepts 的 term 使用英文原文" in SYSTEM_PROMPT
+    _, user = build_messages(title="T", channel="C", tier=GUESS, topics=TOPICS)
+    assert "不要在每條開頭加「可能」" in user["content"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("協助 AI Agent（AI Agent）完成任務", "協助 AI Agent完成任務"),
+        ("使用 rag（RAG）", "使用 rag"),
+        ("the Agent（Agent）", "the Agent"),
+        ("技能（Skill）與提示詞（Prompt）", "技能（Skill）與提示詞（Prompt）"),  # real glosses kept
+        ("LangGraph（狀態機框架）", "LangGraph（狀態機框架）"),  # Chinese explanation kept
+    ],
+)
+def test_drop_repeated_gloss(text: str, expected: str) -> None:
+    assert drop_repeated_gloss(text) == expected
+
+
+def test_repeated_gloss_removed_from_summary_and_points() -> None:
+    llm = FakeLLM(
+        {"primary": [good(one_line_summary="AI Agent（AI Agent）很重要", key_points=["RAG（RAG）"])]}
+    )
+    result = analyzer(llm).analyze(title="T", channel="C", tier=CAPTIONS).analysis
+    assert (result.one_line_summary, result.key_points) == ("AI Agent很重要", ["RAG"])
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("「技能（Skill）本質上是提示詞（Prompt）。」", "技能（Skill）本質上是提示詞（Prompt）。"),
+        ("“quoted”", "quoted"),
+        ("自建 大型語言模型 (Large Language Model) 呼叫", "自建 大型語言模型（Large Language Model） 呼叫"),
+        ("追蹤 ( Trace )", "追蹤（Trace）"),
+        ("「A」與「B」", "「A」與「B」"),  # inner quotes are content, not wrapping
+        ("call f(x) here", "call f(x) here"),  # code-like brackets after ASCII are untouched
+    ],
+)
+def test_tidy_text(text: str, expected: str) -> None:
+    assert tidy_text(text) == expected
+
+
+# Real reply from 2026-10-07 (nemotron, prompt 2026-10-07.4): obviously about agents, yet no topics.
+REAL_MISSED_TOPICS = good(
+    key_points=["漸進式披露（Progressive Disclosure）意味著先給予智能體（Agent）少量資訊。"],
+    key_concepts=[{"term": "Progressive Disclosure", "explanation": "按需載入"}],
+    keywords=["Skill", "Progressive Disclosure", "Prompt", "Agent"],
+    matched_topics=[],
+    relevance_score=10,
+)
+
+
+def test_topics_found_in_keywords_are_added_and_score_made_consistent() -> None:
+    topics = [TopicConfig(name="AI Agent", aliases=["Agent"]), TopicConfig(name="RAG")]
+    outcome = Analyzer(FakeLLM({"m": [REAL_MISSED_TOPICS]}), ["m"], topics).analyze(
+        title="Skills are just fancy prompts", channel="LangChain", tier=CAPTIONS
+    )
+    assert outcome.analysis.matched_topics == ["AI Agent"]
+    assert outcome.analysis.relevance_score == 40
+
+
+def test_topics_found_in_title_are_added() -> None:
+    reply = good(keywords=["Chunking"], key_concepts=[], matched_topics=[], relevance_score=5)
+    outcome = analyzer(FakeLLM({"primary": [reply]})).analyze(
+        title="RAG in 10 minutes", channel="C", tier=CAPTIONS
+    )
+    assert outcome.analysis.matched_topics == ["RAG"]
+
+
+def test_score_capped_when_no_topic_matches() -> None:
+    reply = good(keywords=["Cooking"], key_concepts=[], matched_topics=["Unknown"], relevance_score=90)
+    outcome = analyzer(FakeLLM({"primary": [reply]})).analyze(title="Pasta", channel="C", tier=CAPTIONS)
+    assert (outcome.analysis.matched_topics, outcome.analysis.relevance_score) == ([], 20)
