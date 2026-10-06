@@ -170,6 +170,74 @@ def worker_command(
         raise typer.Exit(code=2)
 
 
+@app.command("analyze")
+def analyze_command(
+    video_id: Annotated[str, typer.Argument(help="YouTube video ID already in the database")],
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the result without saving")] = False,
+    path: SettingsPath = DEFAULT_SETTINGS_PATH,
+) -> None:
+    """Analyse one video with the LLM (uses stored captions, else title + description)."""
+    from yla.analysis.analyzer import AnalysisFailed, Analyzer, store_analysis
+    from yla.content.tiering import choose_content
+    from yla.db.models import Channel
+    from yla.llm.client import OpenRouterClient
+    from yla.youtube.transcripts import DatabaseTranscriptProvider
+
+    settings = _load_settings_or_exit(path)
+    api_key = Secrets().openrouter_api_key
+    if api_key is None:
+        raise _fail("OPENROUTER_API_KEY is not set (see .env.example)")
+    if not settings.llm.models:
+        raise _fail("No LLM model configured: set llm.primary_model in settings.yaml")
+
+    with _db_session() as session, httpx.Client(timeout=180) as client:
+        user = _user_or_exit(session)
+        video = session.scalars(select(Video).where(Video.youtube_video_id == video_id)).first()
+        if video is None:
+            raise _fail(f"Video {video_id} is not in the database (run `yla discover` first)")
+        channel = session.get(Channel, video.channel_id)
+        tier = choose_content(
+            DatabaseTranscriptProvider(session).get(video.id),
+            video.title,
+            video.description,
+            min_description_chars=settings.content.min_description_chars,
+        )
+        if not tier.available:
+            _warn(f"{video_id}: not enough text to summarise (unavailable)")
+            raise typer.Exit(code=1)
+
+        analyzer = Analyzer(
+            OpenRouterClient(api_key.get_secret_value(), client),
+            settings.llm.models,
+            settings.topics,
+            max_input_chars=settings.llm.max_input_chars,
+        )
+        try:
+            outcome = analyzer.analyze(
+                title=video.title, channel=(channel.title or channel.handle) if channel else "", tier=tier
+            )
+        except AnalysisFailed as exc:
+            raise _fail(f"All models failed after {exc.calls} requests: {exc}") from exc
+        if not dry_run:
+            store_analysis(session, video=video, user_id=user.id, outcome=outcome)
+
+    result = outcome.analysis
+    typer.echo(f"{video.title}")
+    typer.echo(f"摘要依據：{tier.basis_label}　摘要信心：{tier.confidence_stars}")
+    if tier.warning:
+        typer.echo(tier.warning)
+    typer.echo(f"一句話摘要：{result.one_line_summary}")
+    for point in result.key_points:
+        typer.echo(f"- {point}")
+    typer.echo(f"關鍵字：{'、'.join(result.keywords)}")
+    typer.echo(f"🎯 相關主題：{'、'.join(result.matched_topics) or '（無）'}（{result.relevance_score}）")
+    if result.limitation:
+        typer.echo(f"限制：{result.limitation}")
+    typer.echo(f"[model {outcome.model}, {outcome.calls} request(s){', not saved' if dry_run else ''}]")
+    for model, error in outcome.errors.items():
+        _warn(f"  {model} failed first: {error}")
+
+
 def _check_network(session: Session, provider: YouTubeTranscriptProvider, video_id: str | None) -> None:
     if video_id is None:
         video_id = session.scalars(select(Video.youtube_video_id).order_by(Video.published_at.desc())).first()

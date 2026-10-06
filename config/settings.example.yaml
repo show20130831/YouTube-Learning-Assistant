@@ -43,6 +43,9 @@ content:
   max_chunks: 6
 
 llm:
-  # Pick long-context free models from https://openrouter.ai/models?max_price=0
-  primary_model: null
-  fallback_models: []
+  # Free long-context models with JSON-schema output (https://openrouter.ai/models?max_price=0).
+  # The free list changes over time; tried in order until one answers.
+  primary_model: nvidia/nemotron-3-super-120b-a12b:free
+  fallback_models:
+    - google/gemma-4-31b-it:free
+    - openrouter/free

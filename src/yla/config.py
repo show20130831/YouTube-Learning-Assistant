@@ -85,6 +85,14 @@ class ContentSettings(_Strict):
 class LLMSettings(_Strict):
     primary_model: str | None = None
     fallback_models: list[str] = Field(default_factory=list)
+    # Longer input is cut until map-reduce lands (Phase 2); ~100k tokens, well inside 262k contexts.
+    max_input_chars: int = Field(default=400_000, ge=1_000)
+
+    @property
+    def models(self) -> list[str]:
+        """Models to try in order: primary first, then fallbacks."""
+        ordered = [self.primary_model, *self.fallback_models] if self.primary_model else self.fallback_models
+        return list(dict.fromkeys(m for m in ordered if m))
 
 
 class AppSettings(_Strict):
