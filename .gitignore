@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+.ruff_cache/
+poc/results/
+config/settings.yaml
+.coverage
+.mypy_cache/
+CLAUDE.md
