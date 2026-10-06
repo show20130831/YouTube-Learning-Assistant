@@ -23,7 +23,12 @@ def make_engine(url: str) -> Engine:
 
 @contextmanager
 def session_scope(engine: Engine) -> Iterator[Session]:
-    """Commit on success, roll back on error."""
+    """Commit on success, roll back on error. Callers may also commit along the way."""
     factory = sessionmaker(bind=engine, expire_on_commit=False)
-    with factory() as session, session.begin():
-        yield session
+    with factory() as session:
+        try:
+            yield session
+            session.commit()
+        except BaseException:
+            session.rollback()
+            raise
