@@ -52,7 +52,7 @@ class FeedParseError(ValueError):
 
 
 class FeedNotFoundError(LookupError):
-    """YouTube returned 404: the channel ID is wrong or the channel is gone."""
+    """YouTube kept returning 404: the channel ID is probably wrong or the channel is gone."""
 
 
 class FeedFetcher(Protocol):
@@ -94,20 +94,33 @@ def parse_feed(xml: str | bytes) -> Feed:
 
 
 def _is_retryable(exc: BaseException) -> bool:
+    # The feed endpoint also returns spurious 404s (observed 2026-10-07: the same valid channel
+    # alternated 404/200 within seconds), so a 404 is retried and only reported if it persists.
+    if isinstance(exc, FeedNotFoundError):
+        return True
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code >= 500 or exc.response.status_code == 429
     return isinstance(exc, httpx.TransportError)
 
 
 class HttpFeedFetcher:
-    """Fetches feeds over HTTP, retrying transient failures (network errors, 429, 5xx)."""
+    """Fetches feeds over HTTP, retrying transient failures (network errors, 404, 429, 5xx)."""
 
-    def __init__(self, client: httpx.Client, *, attempts: int = 3, backoff_seconds: float = 2.0) -> None:
+    def __init__(
+        self,
+        client: httpx.Client,
+        *,
+        attempts: int = 8,
+        backoff_seconds: float = 2.0,
+        max_wait_seconds: float = 10.0,
+    ) -> None:
+        # During YouTube feed outages only ~1 in 4 requests succeeds (measured 2026-10-07), so
+        # several short-capped retries are needed; worst case is about a minute per channel.
         self._client = client
         self._fetch = retry(
             retry=retry_if_exception(_is_retryable),
             stop=stop_after_attempt(attempts),
-            wait=wait_exponential(multiplier=backoff_seconds),
+            wait=wait_exponential(multiplier=backoff_seconds, max=max_wait_seconds),
             reraise=True,
         )(self._fetch_once)
 

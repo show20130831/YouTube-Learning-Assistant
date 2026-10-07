@@ -58,11 +58,19 @@ def test_fetch_requests_channel_feed(fetcher: HttpFeedFetcher) -> None:
 
 
 @respx.mock
-def test_fetch_404_raises_without_retry(fetcher: HttpFeedFetcher) -> None:
+def test_persistent_404_raises_after_retries(fetcher: HttpFeedFetcher) -> None:
     route = respx.get(RSS_URL).respond(404)
     with pytest.raises(FeedNotFoundError):
         fetcher.fetch(CHANNEL_ID)
-    assert route.call_count == 1
+    assert route.call_count == 3
+
+
+@respx.mock
+def test_spurious_404_is_retried(fetcher: HttpFeedFetcher) -> None:
+    route = respx.get(RSS_URL)
+    route.side_effect = [httpx.Response(404), httpx.Response(200, content=FEED_XML)]
+    assert len(fetcher.fetch(CHANNEL_ID).entries) == 3
+    assert route.call_count == 2
 
 
 @respx.mock
