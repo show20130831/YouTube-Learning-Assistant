@@ -98,3 +98,21 @@ def test_duplicate_channel_ids_rejected() -> None:
 
 def test_example_settings_have_channel_ids() -> None:
     assert all(c.channel_id for c in load_settings(EXAMPLE).channels)
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "postgresql://u:p@ep-x-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
+            {"prepare_threshold": None},
+        ),
+        ("postgresql://u:p@ep-x.ap-southeast-1.aws.neon.tech/neondb?sslmode=require", {}),
+        ("postgresql+psycopg://yla:yla@localhost:5432/yla", {}),
+    ],
+)
+def test_prepared_statements_disabled_behind_a_pooler(url: str, expected: dict[str, object]) -> None:
+    from yla.db.session import connect_args, normalize_url
+
+    assert connect_args(url) == expected
+    assert normalize_url(url).startswith("postgresql+psycopg://")

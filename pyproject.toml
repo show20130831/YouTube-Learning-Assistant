@@ -26,6 +26,7 @@ yla = "yla.cli:app"
 
 [dependency-groups]
 dev = [
+    "modal>=1.0",
     "mypy>=1.13",
     "pre-commit>=4.0",
     "pytest>=8.3",
