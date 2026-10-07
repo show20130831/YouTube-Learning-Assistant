@@ -1,0 +1,53 @@
+{
+  "_comment": "Example model replies, keyed by video title. They include the kinds of mistakes seen with free models in real runs (wrapping quotes, 'AI Agent（AI Agent）', half-width glosses, a missed topic, a mechanical 可能 prefix) so the demo shows the code-side fixes.",
+  "Building Reliable AI Agents with LangGraph": {
+    "one_line_summary": "「影片說明如何用 LangGraph 讓 AI Agent（AI Agent）在正式環境中穩定運作：共享狀態、工具調用（Tool Calling）重試與檢查點（Checkpoint）。」",
+    "key_points": [
+      "AI Agent 在正式環境失敗，多半是遺失執行紀錄或工具調用（Tool Calling）逾時。",
+      "LangGraph 把 Agent 建模成共享同一個狀態（State）的節點圖，每個節點回傳狀態更新。",
+      "工具調用加上重試與逾時，錯誤寫入狀態而不是直接拋出例外。",
+      "用條件邊（Conditional Edge）在連續失敗時改走備援節點（Fallback Node）。",
+      "每個節點後建立檢查點（Checkpoint），中斷的執行可以從原處恢復。"
+    ],
+    "key_concepts": [
+      {"term": "State", "explanation": "所有節點共享的狀態物件，記錄 Agent 的決策歷程"},
+      {"term": "Checkpoint", "explanation": "保存每一步之後的狀態，用於中斷後恢復"}
+    ],
+    "keywords": ["LangGraph", "Agent", "State", "Tool Calling", "Checkpoint"],
+    "matched_topics": [],
+    "relevance_score": 15,
+    "limitation": null
+  },
+  "Evaluating RAG Pipelines in Practice": {
+    "one_line_summary": "影片介紹評估檢索增強生成 (Retrieval-Augmented Generation) 流程的三個步驟：檢索召回率、答案忠實度與持續追蹤。",
+    "key_points": [
+      "先用小型標註資料集計算檢索的召回率（Recall@k）。",
+      "再檢查答案中的每個主張是否都有檢索段落支持，也就是忠實度（Faithfulness）。",
+      "可以用 LLM 當評審（LLM-as-a-Judge），但要人工抽查。",
+      "每次調整切段方式（Chunking）或嵌入模型（Embedding Model）時都要重新追蹤指標。"
+    ],
+    "key_concepts": [
+      {"term": "Recall@k", "explanation": "前 k 筆檢索結果中包含正確答案段落的比例"},
+      {"term": "Faithfulness", "explanation": "答案內容是否都能在檢索段落中找到依據"}
+    ],
+    "keywords": ["RAG", "Evaluation", "Recall@k", "Faithfulness", "LLM-as-a-Judge"],
+    "matched_topics": ["RAG", "LLM"],
+    "relevance_score": 85,
+    "limitation": "自動字幕可能有錯字。"
+  },
+  "FastAPI Background Tasks for LLM Apps": {
+    "one_line_summary": "這部影片可能在介紹如何用 FastAPI 的背景任務（Background Tasks）處理耗時的 LLM 呼叫。",
+    "key_points": [
+      "可能 將耗時的 LLM 呼叫移到背景任務，避免 API 請求逾時",
+      "可能：用工作紀錄表讓用戶端輪詢（Polling）結果",
+      "何時該改用正式的任務佇列（Task Queue）"
+    ],
+    "key_concepts": [
+      {"term": "Background Tasks", "explanation": "FastAPI 在回應送出後才執行的工作"}
+    ],
+    "keywords": ["FastAPI", "Background Tasks", "LLM", "Polling", "Task Queue"],
+    "matched_topics": ["FastAPI", "LLM"],
+    "relevance_score": 70,
+    "limitation": "沒有取得字幕，內容僅依標題與描述推測。"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "_comment": "Demo data, written for this project (no real YouTube content). Durations stand in for the YouTube Data API; transcripts stand in for captions fetched by the local worker.",
+  "metadata": {
+    "demo0000001": {"duration_seconds": 1260},
+    "demo0000002": {"duration_seconds": 940},
+    "demo0000003": {"duration_seconds": 1125},
+    "demo0000004": {"duration_seconds": 3600},
+    "demo0000005": {"duration_seconds": 58}
+  },
+  "transcripts": {
+    "demo0000001": {
+      "status": "manual",
+      "language": "en",
+      "text": "Agents fail in production for boring reasons.\nThey lose track of what they already did, or a tool call times out and the whole run crashes.\nIn LangGraph you model the agent as a graph of nodes that share one state object.\nEvery node reads the state and returns an update, so the history of decisions is explicit.\nFor tool calls, wrap each call with a retry and a timeout, and record the error in state instead of raising.\nThen add a conditional edge: if the last tool call failed twice, route to a fallback node that asks the user or uses a cheaper tool.\nFinally, checkpoint the state after every node so a crashed run can resume where it stopped."
+    },
+    "demo0000002": {
+      "status": "generated",
+      "language": "en",
+      "text": "[Music]\nso today we're looking at\nso today we're looking at\nhow to evaluate a rag pipeline\nfirst measure retrieval\ndid the retriever return the passages that contain the answer\nwe use recall at k on a small labelled set\n[Music]\nsecond measure faithfulness\nis every claim in the answer supported by the retrieved passages\nyou can use an llm as a judge but spot check it by hand\nthird track these numbers every time you change chunking or the embedding model\n>> any questions\nthanks for watching"
+    }
+  }
+}

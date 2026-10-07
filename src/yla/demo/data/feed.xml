@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Demo data: a fictional channel. Same structure as https://www.youtube.com/feeds/videos.xml -->
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+ <id>yt:channel:demoChannel000000000001</id>
+ <yt:channelId>demoChannel000000000001</yt:channelId>
+ <title>Example AI Lab</title>
+ <entry>
+  <id>yt:video:demo0000001</id>
+  <yt:videoId>demo0000001</yt:videoId>
+  <yt:channelId>UCdemoChannel000000000001</yt:channelId>
+  <title>Building Reliable AI Agents with LangGraph</title>
+  <published>2026-10-06T16:00:00+00:00</published>
+  <media:group>
+   <media:title>Building Reliable AI Agents with LangGraph</media:title>
+   <media:description>How to keep agent state consistent and recover from tool errors.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:demo0000002</id>
+  <yt:videoId>demo0000002</yt:videoId>
+  <yt:channelId>UCdemoChannel000000000001</yt:channelId>
+  <title>Evaluating RAG Pipelines in Practice</title>
+  <published>2026-10-06T12:00:00+00:00</published>
+  <media:group>
+   <media:title>Evaluating RAG Pipelines in Practice</media:title>
+   <media:description>Measuring retrieval quality and answer faithfulness.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:demo0000003</id>
+  <yt:videoId>demo0000003</yt:videoId>
+  <yt:channelId>UCdemoChannel000000000001</yt:channelId>
+  <title>FastAPI Background Tasks for LLM Apps</title>
+  <published>2026-10-06T08:00:00+00:00</published>
+  <media:group>
+   <media:title>FastAPI Background Tasks for LLM Apps</media:title>
+   <media:description>Long LLM calls should not block your API. In this video we move slow work into FastAPI background tasks, add a simple job table so clients can poll for results, and discuss when to switch to a real task queue.
+
+Chapters:
+0:00 Why requests time out
+3:20 BackgroundTasks basics
+9:45 Polling for results
+15:10 When you need a task queue
+
+→ Code: https://example.com/fastapi-demo
+#fastapi #llm</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:demo0000004</id>
+  <yt:videoId>demo0000004</yt:videoId>
+  <yt:channelId>UCdemoChannel000000000001</yt:channelId>
+  <title>Community Q&amp;A Stream</title>
+  <published>2026-10-05T20:00:00+00:00</published>
+  <media:group>
+   <media:title>Community Q&amp;A Stream</media:title>
+   <media:description>Join us live! https://example.com/discord
+#ai #live
+Subscribe for more!</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:demo0000005</id>
+  <yt:videoId>demo0000005</yt:videoId>
+  <yt:channelId>UCdemoChannel000000000001</yt:channelId>
+  <title>RAG in 60 Seconds #shorts</title>
+  <published>2026-10-05T18:00:00+00:00</published>
+  <media:group>
+   <media:title>RAG in 60 Seconds #shorts</media:title>
+   <media:description>#rag #shorts</media:description>
+  </media:group>
+ </entry>
+</feed>

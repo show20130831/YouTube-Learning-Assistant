@@ -95,6 +95,29 @@ def _print_discovery(report: DiscoveryReport, unresolved: list[str]) -> None:
         _warn(f"  skipped {handle}: no channel_id (add it to settings.yaml, then run sync-config)")
 
 
+@app.command("demo")
+def demo_command(
+    explain: Annotated[bool, typer.Option("--explain", help="Also show what each step did")] = False,
+) -> None:
+    """Run the content pipeline on demo data: no accounts, network or database needed."""
+    from yla.demo import run_demo
+
+    result = run_demo()
+    typer.secho(
+        "Demo mode: a fictional channel and recorded LLM replies; no accounts, network or database.",
+        fg=typer.colors.CYAN,
+    )
+    if explain:
+        typer.echo("")
+        for line in result.explanation:
+            typer.echo(line)
+    typer.echo("")
+    typer.echo(f"LINE digest ({len(result.messages)} message(s)):")
+    for i, message in enumerate(result.messages, 1):
+        typer.echo(f"----- message {i}/{len(result.messages)} -----")
+        typer.echo(message)
+
+
 @app.command("validate-config")
 def validate_config(path: SettingsPath = DEFAULT_SETTINGS_PATH) -> None:
     """Check that the settings file is valid and print a short summary."""
