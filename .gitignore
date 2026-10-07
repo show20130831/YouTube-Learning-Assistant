@@ -9,3 +9,4 @@ config/settings.yaml
 .coverage
 .mypy_cache/
 CLAUDE.md
+logs/
