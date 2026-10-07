@@ -119,9 +119,9 @@ def _footer(data: DigestData) -> str | None:
 def build_messages(data: DigestData) -> list[str]:
     """At most 5 messages, each within LINE's length limit."""
     if not data.videos and not data.unavailable:
-        lines = [f"📺 今日沒有新影片｜{data.day:%Y/%m/%d}", "系統運作正常"]
-        if data.notices:
-            lines += ["", *data.notices]
+        lines = [f"📺 今日沒有新影片｜{data.day:%Y/%m/%d}"]
+        # Only claim everything is fine when nothing went wrong.
+        lines += ["", *data.notices] if data.notices else ["系統運作正常"]
         if data.trends:
             lines += ["", *_trend_lines(data.trends)]
         return ["\n".join(lines)]

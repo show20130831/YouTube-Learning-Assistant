@@ -177,8 +177,14 @@ def _notices(session: Session, videos: list[DigestVideo], deferred: int, *, midn
         notices.append("⚠️ 今日分析流程沒有執行，請檢查排程。")
     elif job.status is JobStatus.FAILED:
         notices.append(f"⚠️ 今日分析流程失敗：{(job.error or '')[:100]}")
-    elif job.stats.get("quota_exhausted"):
-        notices.append(f"⚠️ OpenRouter 免費額度已用完，{deferred} 部影片延到明天。")
+    else:
+        if job.stats.get("quota_exhausted"):
+            notices.append(f"⚠️ OpenRouter 免費額度已用完，{deferred} 部影片延到明天。")
+        if feed_errors := job.stats.get("feed_errors"):
+            notices.append(
+                f"⚠️ 今日分析流程讀取 {len(feed_errors)} 個頻道的 RSS 失敗"
+                "（YouTube 端暫時性錯誤），下次執行會再試。"
+            )
 
     if videos and all(v.source_type is SourceType.TITLE_DESCRIPTION for v in videos):
         notices.append("💻 今日未收到本機字幕，請確認電腦是否開機。")

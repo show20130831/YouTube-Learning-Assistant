@@ -45,7 +45,7 @@ def digest(videos: list[DigestVideo], **overrides: object) -> DigestData:
 
 def test_quiet_day_is_a_single_message() -> None:
     [message] = build_messages(digest([], trends=[("AI Agent", 3)], notices=["💻 今日未收到本機字幕"]))
-    assert message.startswith("📺 今日沒有新影片｜2026/10/07\n系統運作正常")
+    assert message.startswith("📺 今日沒有新影片｜2026/10/07\n\n💻 今日未收到本機字幕")
     assert "💻 今日未收到本機字幕" in message
     assert "1. AI Agent：3 次" in message
 
@@ -188,3 +188,13 @@ def test_network_failure_raises_notify_error(notifier: LineNotifier) -> None:
 def test_invalid_payloads_are_rejected_before_sending(notifier: LineNotifier, messages: list[str]) -> None:
     with pytest.raises(ValueError):
         notifier.push(messages, retry_key="k")
+
+
+def test_quiet_day_with_problems_does_not_claim_all_is_well() -> None:
+    [message] = build_messages(digest([], notices=["⚠️ RSS 失敗"]))
+    assert "系統運作正常" not in message
+    assert message == "📺 今日沒有新影片｜2026/10/07\n\n⚠️ RSS 失敗"
+
+
+def test_quiet_day_without_problems_says_all_is_well() -> None:
+    assert build_messages(digest([])) == ["📺 今日沒有新影片｜2026/10/07\n系統運作正常"]

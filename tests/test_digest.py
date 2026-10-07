@@ -259,3 +259,10 @@ def test_cli_digest_requires_line_settings(cli_db: Engine, monkeypatch: pytest.M
     result = CliRunner().invoke(cli.app, ["digest"])
     assert result.exit_code == 1
     assert "LINE_CHANNEL_ACCESS_TOKEN" in result.output
+
+
+def test_feed_failures_become_a_notice(session: Session) -> None:
+    user = setup(session)
+    daily_job(session, feed_errors={"LangChain": "FeedNotFoundError", "statquest": "FeedNotFoundError"})
+    notices = collect_digest(session, user, now=NOW).notices
+    assert any("讀取 2 個頻道的 RSS 失敗" in n for n in notices)
