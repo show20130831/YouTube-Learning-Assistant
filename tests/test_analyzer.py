@@ -291,7 +291,7 @@ def test_prompt_asks_for_bilingual_terms_and_natural_guess_wording() -> None:
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("協助 AI Agent（AI Agent）完成任務", "協助 AI Agent完成任務"),
+        ("協助 AI Agent（AI Agent）完成任務", "協助 AI Agent 完成任務"),
         ("使用 rag（RAG）", "使用 rag"),
         ("the Agent（Agent）", "the Agent"),
         ("技能（Skill）與提示詞（Prompt）", "技能（Skill）與提示詞（Prompt）"),  # real glosses kept
@@ -307,7 +307,7 @@ def test_repeated_gloss_removed_from_summary_and_points() -> None:
         {"primary": [good(one_line_summary="AI Agent（AI Agent）很重要", key_points=["RAG（RAG）"])]}
     )
     result = analyzer(llm).analyze(title="T", channel="C", tier=CAPTIONS).analysis
-    assert (result.one_line_summary, result.key_points) == ("AI Agent很重要", ["RAG"])
+    assert (result.one_line_summary, result.key_points) == ("AI Agent 很重要", ["RAG"])
 
 
 @pytest.mark.parametrize(
@@ -315,8 +315,10 @@ def test_repeated_gloss_removed_from_summary_and_points() -> None:
     [
         ("「技能（Skill）本質上是提示詞（Prompt）。」", "技能（Skill）本質上是提示詞（Prompt）。"),
         ("“quoted”", "quoted"),
-        ("自建 大型語言模型 (Large Language Model) 呼叫", "自建 大型語言模型（Large Language Model） 呼叫"),
+        ("自建 大型語言模型 (Large Language Model) 呼叫", "自建 大型語言模型（Large Language Model）呼叫"),
         ("追蹤 ( Trace )", "追蹤（Trace）"),
+        ("生成 (RAG) and more", "生成（RAG） and more"),  # space kept before English
+        ("AI Agent（AI Agent）. Done", "AI Agent. Done"),
         ("「A」與「B」", "「A」與「B」"),  # inner quotes are content, not wrapping
         ("call f(x) here", "call f(x) here"),  # code-like brackets after ASCII are untouched
     ],

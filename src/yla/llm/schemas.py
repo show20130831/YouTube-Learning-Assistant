@@ -16,22 +16,26 @@ from pydantic import BaseModel, ConfigDict, Field
 # says the content is a guess. Natural phrasing such as "可能介紹……" has no separator and is kept.
 _GUESS_PREFIX = re.compile(r"^(?:可能|推測)[\s:：,，、]+")
 
-# An English term followed by a full-width bracket gloss, e.g. "AI Agent（AI Agent）".
-_ENGLISH_WITH_GLOSS = re.compile(r"([A-Za-z][A-Za-z0-9 .\-]*)（([^（）]+)）")
+_CJK = "㐀-鿿"
+# An English term followed by a full-width bracket gloss, e.g. "AI Agent（AI Agent）". The
+# lookahead captures the next character so a space can be kept before following Chinese text.
+_ENGLISH_WITH_GLOSS = re.compile(rf"([A-Za-z][A-Za-z0-9 .\-]*)（([^（）]+)）(?=([{_CJK}])?)")
 
 
 def drop_repeated_gloss(text: str) -> str:
-    """ "AI Agent（AI Agent）" -> "AI Agent". Real glosses like "技能（Skill）" are left alone."""
+    """ "AI Agent（AI Agent）在" -> "AI Agent 在". Real glosses like "技能（Skill）" are left alone."""
 
     def replace(match: re.Match[str]) -> str:
         term, gloss = match.group(1), match.group(2).strip()
-        return term if term.strip().casefold().endswith(gloss.casefold()) else match.group(0)
+        if not term.strip().casefold().endswith(gloss.casefold()):
+            return match.group(0)
+        return f"{term} " if match.group(3) else term
 
     return _ENGLISH_WITH_GLOSS.sub(replace, text)
 
 
-# "大型語言模型 (Large Language Model)" -> "大型語言模型（Large Language Model）"
-_HALF_WIDTH_GLOSS = re.compile(r"([㐀-鿿])\s*\(\s*([A-Za-z][^()]*?)\s*\)")
+# "大型語言模型 (Large Language Model) 呼叫" -> "大型語言模型（Large Language Model）呼叫"
+_HALF_WIDTH_GLOSS = re.compile(rf"([{_CJK}])\s*\(\s*([A-Za-z][^()]*?)\s*\)(?:\s+(?=[{_CJK}]))?")
 _WRAPPING_QUOTES = (("「", "」"), ("“", "”"), ('"', '"'), ("『", "』"))
 
 
