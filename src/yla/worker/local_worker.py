@@ -10,6 +10,7 @@ from a blocked IP only makes things worse, and videos simply fall back to title 
 from __future__ import annotations
 
 import logging
+import socket
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -18,7 +19,9 @@ from datetime import datetime, timedelta
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
-from yla.db.models import Subscription, Transcript, Video, VideoStatus
+from yla.db.models import JobRun, JobStatus, Subscription, Transcript, User, Video, VideoStatus
+from yla.pipeline.discovery import DiscoveryReport, discover_videos
+from yla.youtube.rss import FeedFetcher
 from yla.youtube.transcripts import TranscriptProvider, TranscriptSink, TranscriptStatus
 
 logger = logging.getLogger(__name__)
@@ -96,3 +99,61 @@ def fetch_transcripts(
         else:
             report.errors[video.youtube_video_id] = result.error or result.status.value
     return report
+
+
+JOB_NAME = "local_worker"
+
+
+@dataclass
+class WorkerReport:
+    discovery: DiscoveryReport | None
+    transcripts: TranscriptFetchReport
+
+
+def run_local_worker(
+    session: Session,
+    user: User,
+    provider: TranscriptProvider,
+    sink: TranscriptSink,
+    *,
+    now: datetime,
+    feed_fetcher: FeedFetcher | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> WorkerReport:
+    """Discover + fetch captions, recorded as a ``local_worker`` job so the cloud side (and the
+    LINE digest) can tell whether the home computer did its part today."""
+    job = JobRun(job_name=JOB_NAME, status=JobStatus.RUNNING, stats={"host": socket.gethostname()})
+    session.add(job)
+    session.commit()
+
+    discovery: DiscoveryReport | None = None
+    try:
+        if feed_fetcher is not None:
+            discovery = discover_videos(session, user.id, feed_fetcher, now=now)
+            session.commit()
+        transcripts = fetch_transcripts(
+            session, user.id, provider, sink, now=now, limit=user.daily_video_limit * 2, sleep=sleep
+        )
+    except Exception as exc:
+        session.rollback()
+        job.status, job.error = JobStatus.FAILED, f"{type(exc).__name__}: {exc}"[:2000]
+        job.finished_at = now
+        session.commit()
+        raise
+
+    saved = list(transcripts.saved.values())
+    job.stats = {
+        **job.stats,
+        "new_videos": len(discovery.new_videos) if discovery else None,
+        "feed_errors": discovery.failed_channels if discovery else {},
+        "attempted": transcripts.attempted,
+        "saved": len(saved),
+        "manual": saved.count(TranscriptStatus.MANUAL),
+        "auto": saved.count(TranscriptStatus.GENERATED),
+        "no_captions": len(transcripts.no_captions),
+        "errors": len(transcripts.errors),
+        "blocked": transcripts.blocked,
+    }
+    job.status, job.finished_at = JobStatus.SUCCEEDED, now
+    session.commit()
+    return WorkerReport(discovery=discovery, transcripts=transcripts)

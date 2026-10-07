@@ -198,3 +198,10 @@ def test_quiet_day_with_problems_does_not_claim_all_is_well() -> None:
 
 def test_quiet_day_without_problems_says_all_is_well() -> None:
     assert build_messages(digest([])) == ["📺 今日沒有新影片｜2026/10/07\n系統運作正常"]
+
+
+def test_status_lines_show_with_or_without_problems() -> None:
+    ok = build_messages(digest([], status=["💻 本機 worker：10:31 完成（字幕 0/0）"]))
+    assert ok == ["📺 今日沒有新影片｜2026/10/07\n系統運作正常\n💻 本機 worker：10:31 完成（字幕 0/0）"]
+    overview = build_messages(digest([video()], status=["💻 info"], notices=["⚠️ warn"]))[0]
+    assert overview.endswith("\n\n💻 info\n⚠️ warn")

@@ -26,7 +26,6 @@ from yla.db.models import (
     DigestStatus,
     JobRun,
     JobStatus,
-    SourceType,
     Subscription,
     User,
     UserVideoRelevance,
@@ -36,6 +35,7 @@ from yla.db.models import (
 from yla.notify.formatter import DigestData, DigestVideo, build_messages
 from yla.notify.line import Notifier, NotifyError
 from yla.pipeline.daily import JOB_NAME as DAILY_JOB_NAME
+from yla.worker.local_worker import JOB_NAME as WORKER_JOB_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +141,7 @@ def collect_digest(session: Session, user: User, *, now: datetime) -> DigestData
         or 0
     )
 
+    worker_info, worker_warnings = _worker_status(session, midnight=midnight, tz=tz)
     return DigestData(
         day=today,
         channels_tracked=channels_tracked,
@@ -149,7 +150,8 @@ def collect_digest(session: Session, user: User, *, now: datetime) -> DigestData
         unavailable=unavailable,
         deferred=deferred,
         trends=_trends(session, user, now=now),
-        notices=_notices(session, videos, deferred, midnight=midnight),
+        status=worker_info,
+        notices=[*worker_warnings, *_notices(session, videos, deferred, midnight=midnight)],
     )
 
 
@@ -186,9 +188,33 @@ def _notices(session: Session, videos: list[DigestVideo], deferred: int, *, midn
                 "（YouTube 端暫時性錯誤），下次執行會再試。"
             )
 
-    if videos and all(v.source_type is SourceType.TITLE_DESCRIPTION for v in videos):
-        notices.append("💻 今日未收到本機字幕，請確認電腦是否開機。")
     return notices
+
+
+def _worker_status(session: Session, *, midnight: datetime, tz: ZoneInfo) -> tuple[list[str], list[str]]:
+    """Today's local worker run as (info lines, warnings), so problems at home show up on LINE."""
+    job = session.scalars(
+        select(JobRun)
+        .where(JobRun.job_name == WORKER_JOB_NAME, JobRun.started_at >= midnight)
+        .order_by(JobRun.id.desc())
+        .limit(1)
+    ).first()
+    if job is None:
+        return [], ["⚠️ 本機 worker 今天沒有執行（電腦可能沒開機），今天的影片只能用標題與描述摘要。"]
+    if job.status is JobStatus.FAILED:
+        return [], [f"⚠️ 本機 worker 執行失敗：{(job.error or '')[:100]}"]
+    if job.status is JobStatus.RUNNING:
+        return [], ["⚠️ 本機 worker 尚未執行完成（可能中途中斷）。"]
+
+    stats = job.stats
+    warnings: list[str] = []
+    if stats.get("blocked"):
+        warnings.append("⚠️ 本機 worker 的字幕請求被 YouTube 封鎖，今天的影片只能用標題與描述摘要。")
+    feed_errors = len(stats.get("feed_errors") or {})
+    feeds = f"，RSS 失敗 {feed_errors} 個頻道" if feed_errors else ""
+    when = job.started_at.astimezone(tz).strftime("%H:%M")
+    info = f"💻 本機 worker：{when} 完成（字幕 {stats.get('saved', 0)}/{stats.get('attempted', 0)}{feeds}）"
+    return [info], warnings
 
 
 def send_digest(session: Session, user: User, notifier: Notifier, *, now: datetime) -> DigestOutcome:

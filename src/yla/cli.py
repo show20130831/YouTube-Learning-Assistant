@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import httpx
 import typer
@@ -80,15 +80,18 @@ def _discover(session: Session, user: User, client: httpx.Client) -> DiscoveryRe
     resolved = resolve_missing_channel_ids(session, user.id, resolver=None)
     report = discover_videos(session, user.id, HttpFeedFetcher(client), now=datetime.now(UTC))
     session.commit()
+    _print_discovery(report, resolved.unresolved)
+    return report
 
+
+def _print_discovery(report: DiscoveryReport, unresolved: list[str]) -> None:
     typer.echo(f"Checked {report.channels_checked} channel feeds")
     typer.echo(f"  new videos:  {len(report.new_videos)}")
     typer.echo(f"  backfilled:  {report.backfilled} (first read of a channel; not analysed)")
     for handle, error in report.failed_channels.items():
         _warn(f"  failed: {handle}: {error}")
-    for handle in resolved.unresolved:
+    for handle in unresolved:
         _warn(f"  skipped {handle}: no channel_id (add it to settings.yaml, then run sync-config)")
-    return report
 
 
 @app.command("validate-config")
@@ -137,7 +140,7 @@ def worker_command(
     skip_discover: Annotated[bool, typer.Option("--skip-discover", help="Do not read RSS first")] = False,
 ) -> None:
     """Local worker: discover new videos, then fetch captions from this (home) network."""
-    from yla.worker.local_worker import fetch_transcripts
+    from yla.worker.local_worker import run_local_worker
 
     provider = YouTubeTranscriptProvider()
     with _db_session() as session:
@@ -146,30 +149,80 @@ def worker_command(
             return
 
         user = _user_or_exit(session)
-        if not skip_discover:
-            with httpx.Client(timeout=20) as client:
-                _discover(session, user, client)
+        resolved = resolve_missing_channel_ids(session, user.id, resolver=None)
+        with httpx.Client(timeout=20) as client:
+            report = run_local_worker(
+                session,
+                user,
+                provider,
+                DatabaseTranscriptSink(session),
+                now=datetime.now(UTC),
+                feed_fetcher=None if skip_discover else HttpFeedFetcher(client),
+            )
 
-        report = fetch_transcripts(
-            session,
-            user.id,
-            provider,
-            DatabaseTranscriptSink(session),
-            now=datetime.now(UTC),
-            limit=user.daily_video_limit * 2,
-        )
-
-    counts = {
-        s: list(report.saved.values()).count(s) for s in (TranscriptStatus.MANUAL, TranscriptStatus.GENERATED)
-    }
-    typer.echo(f"Fetched captions for {len(report.saved)} of {report.attempted} videos")
-    typer.echo(f"  manual: {counts[TranscriptStatus.MANUAL]}, auto: {counts[TranscriptStatus.GENERATED]}")
-    typer.echo(f"  no captions: {len(report.no_captions)}")
-    for vid, error in report.errors.items():
+    if report.discovery is not None:
+        _print_discovery(report.discovery, resolved.unresolved)
+    result = report.transcripts
+    saved = list(result.saved.values())
+    typer.echo(f"Fetched captions for {len(saved)} of {result.attempted} videos")
+    typer.echo(
+        f"  manual: {saved.count(TranscriptStatus.MANUAL)}, auto: {saved.count(TranscriptStatus.GENERATED)}"
+    )
+    typer.echo(f"  no captions: {len(result.no_captions)}")
+    for vid, error in result.errors.items():
         _warn(f"  error {vid}: {error}")
-    if report.blocked:
+    if result.blocked:
         _warn("YouTube is blocking caption requests from this network; videos will use title + description.")
         raise typer.Exit(code=2)
+
+
+@app.command("status")
+def status_command(
+    days: Annotated[int, typer.Option(help="How many days of job runs to show")] = 3,
+) -> None:
+    """Show recent job runs (local worker, daily pipeline, digest) for troubleshooting."""
+    from zoneinfo import ZoneInfo
+
+    from yla.db.models import JobRun
+
+    with _db_session() as session:
+        user = _user_or_exit(session)
+        tz = ZoneInfo(user.timezone)
+        since = datetime.now(UTC) - timedelta(days=days)
+        runs = session.scalars(
+            select(JobRun).where(JobRun.started_at >= since).order_by(JobRun.started_at.desc())
+        ).all()
+
+    if not runs:
+        typer.echo(f"No job runs in the last {days} day(s).")
+        return
+    for run in runs:
+        when = run.started_at.astimezone(tz).strftime("%m/%d %H:%M")
+        color = {"succeeded": typer.colors.GREEN, "failed": typer.colors.RED}.get(run.status.value)
+        typer.secho(f"{when}  {run.job_name:<15} {run.status.value:<10}", fg=color, nl=False)
+        typer.echo(f" {_summarize_stats(run.job_name, run.stats)}")
+        if run.error:
+            _warn(f"               {run.error.splitlines()[0][:150]}")
+
+
+def _summarize_stats(job_name: str, stats: dict[str, Any]) -> str:
+    feed_errors = len(stats.get("feed_errors") or {})
+    feeds = f", RSS failed {feed_errors}" if feed_errors else ""
+    if job_name == "local_worker":
+        blocked = ", BLOCKED" if stats.get("blocked") else ""
+        return (
+            f"[{stats.get('host', '?')}] new {stats.get('new_videos', '-')}, "
+            f"captions {stats.get('saved', 0)}/{stats.get('attempted', 0)}{feeds}{blocked}"
+        )
+    if job_name == "daily_pipeline":
+        quota = ", QUOTA USED UP" if stats.get("quota_exhausted") else ""
+        return (
+            f"analysed {stats.get('analyzed', 0)} ({stats.get('llm_calls', 0)} LLM), "
+            f"deferred {stats.get('deferred', 0)}, unavailable {stats.get('unavailable', 0)}{feeds}{quota}"
+        )
+    if job_name == "send_digest":
+        return f"{stats.get('messages', 0)} message(s)"
+    return ""
 
 
 def _openrouter_key_or_exit(settings: AppSettings) -> str:

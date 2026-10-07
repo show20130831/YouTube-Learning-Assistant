@@ -105,9 +105,16 @@ class FakeNotifier:
         return self.delivered
 
 
+def worker_job(session: Session, status: JobStatus = JobStatus.SUCCEEDED, **stats: object) -> None:
+    error = "ConnectionError: x" if status is JobStatus.FAILED else None
+    session.add(JobRun(job_name="local_worker", status=status, stats=stats, error=error))
+    session.flush()
+
+
 def test_collects_todays_analyses_counts_and_trends(session: Session) -> None:
     user = setup(session)
     daily_job(session)
+    worker_job(session, saved=2, attempted=2)
     analyse(session, user, add_video(session, "a"), level=3, score=80)
     analyse(session, user, add_video(session, "b"), level=1, score=40)
     add_video(session, "gone", status=VideoStatus.UNAVAILABLE)
@@ -171,11 +178,34 @@ def test_pipeline_problems_become_notices(
     assert expected in collect_digest(session, user, now=NOW).notices
 
 
-def test_all_topic_guesses_suggest_the_computer_was_off(session: Session) -> None:
+def test_successful_worker_is_an_info_line(session: Session) -> None:
     user = setup(session)
     daily_job(session)
-    analyse(session, user, add_video(session, "a"), level=1)
-    assert "💻 今日未收到本機字幕，請確認電腦是否開機。" in collect_digest(session, user, now=NOW).notices
+    worker_job(session, saved=3, attempted=4, feed_errors={"LangChain": "x"})
+    data = collect_digest(session, user, now=NOW)
+    assert data.notices == []
+    [line] = data.status
+    assert line.startswith("💻 本機 worker：") and "完成（字幕 3/4，RSS 失敗 1 個頻道）" in line
+
+
+@pytest.mark.parametrize(
+    ("status", "stats", "expected"),
+    [
+        (None, {}, "⚠️ 本機 worker 今天沒有執行（電腦可能沒開機）"),
+        (JobStatus.FAILED, {}, "⚠️ 本機 worker 執行失敗：ConnectionError: x"),
+        (JobStatus.RUNNING, {}, "⚠️ 本機 worker 尚未執行完成"),
+        (JobStatus.SUCCEEDED, {"blocked": True}, "⚠️ 本機 worker 的字幕請求被 YouTube 封鎖"),
+    ],
+)
+def test_worker_problems_become_warnings(
+    session: Session, status: JobStatus | None, stats: dict[str, object], expected: str
+) -> None:
+    user = setup(session)
+    daily_job(session)
+    if status is not None:
+        worker_job(session, status, **stats)
+    notices = collect_digest(session, user, now=NOW).notices
+    assert any(n.startswith(expected) for n in notices), notices
 
 
 def test_send_once_per_day(session: Session) -> None:

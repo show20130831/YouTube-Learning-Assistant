@@ -43,7 +43,8 @@ class DigestData:
     unavailable: list[str] = field(default_factory=list)  # "title｜channel"
     deferred: int = 0
     trends: list[tuple[str, int]] = field(default_factory=list)
-    notices: list[str] = field(default_factory=list)
+    status: list[str] = field(default_factory=list)  # informational, e.g. local worker summary
+    notices: list[str] = field(default_factory=list)  # warnings: something needs attention
 
 
 def _video_block(index: int, video: DigestVideo) -> str:
@@ -84,8 +85,8 @@ def _overview(data: DigestData) -> str:
         f"發現新影片：{data.new_videos} 部",
         f"完成分析：{len(data.videos)} 部",
     ]
-    if data.notices:
-        lines += ["", *data.notices]
+    if data.status or data.notices:
+        lines += ["", *data.status, *data.notices]
     return "\n".join(lines)
 
 
@@ -121,7 +122,7 @@ def build_messages(data: DigestData) -> list[str]:
     if not data.videos and not data.unavailable:
         lines = [f"📺 今日沒有新影片｜{data.day:%Y/%m/%d}"]
         # Only claim everything is fine when nothing went wrong.
-        lines += ["", *data.notices] if data.notices else ["系統運作正常"]
+        lines += ["", *data.status, *data.notices] if data.notices else ["系統運作正常", *data.status]
         if data.trends:
             lines += ["", *_trend_lines(data.trends)]
         return ["\n".join(lines)]

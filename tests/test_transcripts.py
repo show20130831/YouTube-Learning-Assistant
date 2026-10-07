@@ -308,7 +308,7 @@ def cli_db(engine, test_database_url, tmp_path, monkeypatch):  # type: ignore[no
     monkeypatch.setenv("DATABASE_URL", test_database_url)
     yield engine
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE users, channels RESTART IDENTITY CASCADE"))
+        conn.execute(text("TRUNCATE users, channels, job_runs RESTART IDENTITY CASCADE"))
 
 
 def use_provider(monkeypatch: pytest.MonkeyPatch, results: dict[str, TranscriptResult]) -> ScriptedProvider:
@@ -364,3 +364,95 @@ def test_cli_worker_exits_2_when_blocked(cli_db: Engine, monkeypatch: pytest.Mon
     result = CliRunner().invoke(cli.app, ["worker", "--skip-discover"])
     assert result.exit_code == 2
     assert "blocking caption requests" in result.output
+
+
+# --- run_local_worker (job record) -------------------------------------------------------
+
+
+@pytest.mark.db
+def test_run_local_worker_records_a_job(session: Session) -> None:
+    from yla.db.models import JobRun, JobStatus
+    from yla.worker.local_worker import run_local_worker
+
+    add_videos(session, [("a", VideoStatus.PENDING, 0), ("b", VideoStatus.PENDING, 0)])
+    user = session.scalars(select(User)).one()
+    report = run_local_worker(
+        session,
+        user,
+        ScriptedProvider({"a": GOOD}),
+        DatabaseTranscriptSink(session),
+        now=NOW,
+        sleep=lambda _: None,
+    )
+
+    assert report.discovery is None and report.transcripts.saved == {"a": TranscriptStatus.GENERATED}
+    job = session.scalars(select(JobRun).where(JobRun.job_name == "local_worker")).one()
+    assert job.status is JobStatus.SUCCEEDED
+    assert {k: job.stats[k] for k in ("saved", "attempted", "auto", "no_captions", "blocked")} == {
+        "saved": 1,
+        "attempted": 2,
+        "auto": 1,
+        "no_captions": 1,
+        "blocked": False,
+    }
+    assert job.stats["host"]
+
+
+@pytest.mark.db
+def test_run_local_worker_records_failures(session: Session) -> None:
+    from yla.db.models import JobRun, JobStatus
+    from yla.worker.local_worker import run_local_worker
+
+    add_videos(session, [("a", VideoStatus.PENDING, 0)])
+    user = session.scalars(select(User)).one()
+
+    class Broken:
+        def fetch(self, video_id: str) -> TranscriptResult:
+            raise RuntimeError("disk full")
+
+    with pytest.raises(RuntimeError):
+        run_local_worker(session, user, Broken(), DatabaseTranscriptSink(session), now=NOW)
+    job = session.scalars(select(JobRun).where(JobRun.job_name == "local_worker")).one()
+    assert (job.status, job.error) == (JobStatus.FAILED, "RuntimeError: disk full")
+
+
+@pytest.mark.db
+def test_cli_status_lists_recent_jobs(cli_db: Engine) -> None:
+    from yla.db.models import JobRun, JobStatus
+
+    with Session(cli_db) as db:
+        add_videos(db, [])
+        db.add_all(
+            [
+                JobRun(
+                    job_name="local_worker",
+                    status=JobStatus.SUCCEEDED,
+                    stats={"host": "pc", "saved": 2, "attempted": 3, "blocked": True},
+                ),
+                JobRun(
+                    job_name="daily_pipeline",
+                    status=JobStatus.SUCCEEDED,
+                    stats={"analyzed": 4, "llm_calls": 4, "quota_exhausted": True},
+                ),
+                JobRun(
+                    job_name="send_digest",
+                    status=JobStatus.FAILED,
+                    stats={"messages": 3},
+                    error="HTTP 401: bad token",
+                ),
+            ]
+        )
+        db.commit()
+    result = CliRunner().invoke(cli.app, ["status"])
+    assert result.exit_code == 0, result.output
+    assert "[pc] new -, captions 2/3, BLOCKED" in result.output
+    assert "analysed 4 (4 LLM)" in result.output and "QUOTA USED UP" in result.output
+    assert "HTTP 401: bad token" in result.output
+
+
+@pytest.mark.db
+def test_cli_status_with_no_runs(cli_db: Engine) -> None:
+    with Session(cli_db) as db:
+        add_videos(db, [])
+        db.commit()
+    assert "No job runs" in CliRunner().invoke(cli.app, ["status"]).output
