@@ -19,9 +19,7 @@ class TopicMatcher:
         # Longest terms first so "AI Agents" wins over "Agent" inside the same text.
         terms = sorted(self._lookup, key=len, reverse=True)
         self._pattern = (
-            re.compile(r"(?<![\w-])(" + "|".join(re.escape(t) for t in terms) + r")(?![\w-])", re.IGNORECASE)
-            if terms
-            else None
+            re.compile("|".join(_with_boundaries(t) for t in terms), re.IGNORECASE) if terms else None
         )
 
     @property
@@ -39,7 +37,25 @@ class TopicMatcher:
         """Topics whose name or alias appears as a whole word or phrase in free text."""
         if self._pattern is None:
             return []
-        return _unique(self._lookup[m.group(1).casefold()] for m in self._pattern.finditer(text))
+        return _unique(self._lookup[m.group(0).casefold()] for m in self._pattern.finditer(text))
+
+
+_ASCII_WORD = re.compile(r"[A-Za-z0-9]")
+
+
+def _with_boundaries(term: str) -> str:
+    """Whole-word only where the term has an English letter or digit at that edge.
+
+    "ML" must not match inside "HTML", but Chinese has no spaces between words, so
+    "機器學習" must match in "機器學習2026" and "LangChain" in "用LangChain打造". Python's regex
+    word classes treat Chinese characters as letters, so they cannot be used for this.
+    """
+    pattern = re.escape(term)
+    if _ASCII_WORD.match(term[0]):
+        pattern = r"(?<![A-Za-z0-9_-])" + pattern
+    if _ASCII_WORD.match(term[-1]):
+        pattern += r"(?![A-Za-z0-9_-])"
+    return pattern
 
 
 def _unique(items: Iterable[str]) -> list[str]:
