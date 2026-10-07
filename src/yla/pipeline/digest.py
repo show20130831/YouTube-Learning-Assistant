@@ -122,7 +122,9 @@ def collect_digest(session: Session, user: User, *, now: datetime) -> DigestData
         .where(Video.discovered_at >= since)
     )
     discovered = session.execute(recent_videos).all()
-    new_videos = sum(1 for v, _ in discovered if v.status is not VideoStatus.SKIPPED_BACKFILL)
+    not_new = (VideoStatus.SKIPPED_BACKFILL, VideoStatus.SKIPPED_SHORT)
+    new_videos = sum(1 for v, _ in discovered if v.status not in not_new)
+    shorts_skipped = sum(1 for v, _ in discovered if v.status is VideoStatus.SKIPPED_SHORT)
     unavailable = [
         f"{v.title}｜{c.title or c.handle}" for v, c in discovered if v.status is VideoStatus.UNAVAILABLE
     ]
@@ -146,6 +148,7 @@ def collect_digest(session: Session, user: User, *, now: datetime) -> DigestData
         day=today,
         channels_tracked=channels_tracked,
         new_videos=new_videos,
+        shorts_skipped=shorts_skipped,
         videos=videos,
         unavailable=unavailable,
         deferred=deferred,

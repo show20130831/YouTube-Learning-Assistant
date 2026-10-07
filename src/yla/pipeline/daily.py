@@ -30,6 +30,8 @@ from yla.config import AppSettings
 from yla.content.tiering import ContentTier, choose_content
 from yla.db.models import Analysis, Channel, JobRun, JobStatus, Subscription, User, Video, VideoStatus
 from yla.pipeline.discovery import DiscoveryReport, discover_videos
+from yla.pipeline.enrich import enrich_videos
+from yla.youtube.data_api import MetadataProvider
 from yla.youtube.rss import FeedFetcher
 from yla.youtube.transcripts import DatabaseTranscriptProvider
 
@@ -52,6 +54,9 @@ class DailyReport:
     llm_calls: int = 0
     quota_exhausted: bool = False
     feed_errors: dict[str, str] = field(default_factory=dict)
+    shorts_skipped: int = 0
+    waiting: int = 0
+    metadata_error: str | None = None
 
     def stats(self) -> dict[str, object]:
         data = asdict(self)
@@ -103,6 +108,7 @@ def run_daily_pipeline(
     *,
     now: datetime,
     feed_fetcher: FeedFetcher | None = None,
+    metadata: MetadataProvider | None = None,
 ) -> DailyReport:
     report = DailyReport(run_id=uuid.uuid4().hex[:8])
     job = JobRun(job_name=JOB_NAME, status=JobStatus.RUNNING, stats={"run_id": report.run_id})
@@ -115,6 +121,11 @@ def run_daily_pipeline(
             discovery: DiscoveryReport = discover_videos(session, user.id, feed_fetcher, now=now)
             report.discovered = len(discovery.new_videos)
             report.feed_errors = discovery.failed_channels
+            session.commit()
+        if metadata is not None:
+            enriched = enrich_videos(session, user, metadata, now=now)
+            report.shorts_skipped, report.waiting = len(enriched.shorts), len(enriched.waiting)
+            report.metadata_error = enriched.error
             session.commit()
 
         _process(session, user, settings, analyzer, now=now, report=report)

@@ -205,3 +205,8 @@ def test_status_lines_show_with_or_without_problems() -> None:
     assert ok == ["📺 今日沒有新影片｜2026/10/07\n系統運作正常\n💻 本機 worker：10:31 完成（字幕 0/0）"]
     overview = build_messages(digest([video()], status=["💻 info"], notices=["⚠️ warn"]))[0]
     assert overview.endswith("\n\n💻 info\n⚠️ warn")
+
+
+def test_skipped_shorts_are_mentioned_in_the_overview() -> None:
+    overview = build_messages(digest([video()], shorts_skipped=2))[0]
+    assert "發現新影片：1 部（另略過 Shorts 2 部）" in overview

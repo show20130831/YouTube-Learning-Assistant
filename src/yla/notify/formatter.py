@@ -40,6 +40,7 @@ class DigestData:
     channels_tracked: int
     new_videos: int
     videos: list[DigestVideo]
+    shorts_skipped: int = 0
     unavailable: list[str] = field(default_factory=list)  # "title｜channel"
     deferred: int = 0
     trends: list[tuple[str, int]] = field(default_factory=list)
@@ -82,7 +83,8 @@ def _overview(data: DigestData) -> str:
         f"📺 今日 YouTube 學習摘要｜{data.day:%Y/%m/%d}",
         "",
         f"今日追蹤頻道：{data.channels_tracked} 個",
-        f"發現新影片：{data.new_videos} 部",
+        f"發現新影片：{data.new_videos} 部"
+        + (f"（另略過 Shorts {data.shorts_skipped} 部）" if data.shorts_skipped else ""),
         f"完成分析：{len(data.videos)} 部",
     ]
     if data.status or data.notices:

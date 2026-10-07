@@ -22,6 +22,7 @@ from yla.llm.client import OpenRouterClient
 from yla.pipeline.discovery import DiscoveryReport, discover_videos
 from yla.sync import sync_config
 from yla.youtube.channels import resolve_missing_channel_ids
+from yla.youtube.data_api import MetadataProvider
 from yla.youtube.rss import HttpFeedFetcher
 from yla.youtube.transcripts import (
     DatabaseTranscriptSink,
@@ -158,6 +159,7 @@ def worker_command(
                 DatabaseTranscriptSink(session),
                 now=datetime.now(UTC),
                 feed_fetcher=None if skip_discover else HttpFeedFetcher(client),
+                metadata=_metadata_provider(client),
             )
 
     if report.discovery is not None:
@@ -210,9 +212,10 @@ def _summarize_stats(job_name: str, stats: dict[str, Any]) -> str:
     feeds = f", RSS failed {feed_errors}" if feed_errors else ""
     if job_name == "local_worker":
         blocked = ", BLOCKED" if stats.get("blocked") else ""
+        shorts = f", Shorts {stats['shorts_skipped']}" if stats.get("shorts_skipped") else ""
         return (
             f"[{stats.get('host', '?')}] new {stats.get('new_videos', '-')}, "
-            f"captions {stats.get('saved', 0)}/{stats.get('attempted', 0)}{feeds}{blocked}"
+            f"captions {stats.get('saved', 0)}/{stats.get('attempted', 0)}{shorts}{feeds}{blocked}"
         )
     if job_name == "daily_pipeline":
         quota = ", QUOTA USED UP" if stats.get("quota_exhausted") else ""
@@ -223,6 +226,14 @@ def _summarize_stats(job_name: str, stats: dict[str, Any]) -> str:
     if job_name == "send_digest":
         return f"{stats.get('messages', 0)} message(s)"
     return ""
+
+
+def _metadata_provider(client: httpx.Client) -> MetadataProvider | None:
+    """The optional YouTube Data API; without a key videos are treated as ordinary videos."""
+    from yla.youtube.data_api import YouTubeDataApi
+
+    key = Secrets().youtube_api_key
+    return YouTubeDataApi(key.get_secret_value(), client) if key and key.get_secret_value() else None
 
 
 def _openrouter_key_or_exit(settings: AppSettings) -> str:
@@ -262,12 +273,17 @@ def run_command(
             _build_analyzer(settings, api_key, client),
             now=datetime.now(UTC),
             feed_fetcher=None if skip_discover else HttpFeedFetcher(client),
+            metadata=_metadata_provider(client),
         )
 
     typer.echo(f"Daily pipeline {report.run_id}")
     typer.echo(f"  new videos:  {report.discovered}")
     typer.echo(f"  analysed:    {len(report.analyzed)}  ({report.llm_calls} LLM requests)")
     typer.echo(f"  unavailable: {len(report.unavailable)}")
+    if report.shorts_skipped or report.waiting:
+        typer.echo(f"  skipped Shorts: {report.shorts_skipped}, waiting for streams: {report.waiting}")
+    if report.metadata_error:
+        _warn(f"  YouTube Data API unavailable: {report.metadata_error}")
     typer.echo(f"  deferred:    {len(report.deferred)}")
     if report.failed or report.expired:
         _warn(f"  failed: {len(report.failed)}, expired: {len(report.expired)}")

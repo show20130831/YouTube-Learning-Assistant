@@ -21,6 +21,8 @@ from sqlalchemy.orm import Session
 
 from yla.db.models import JobRun, JobStatus, Subscription, Transcript, User, Video, VideoStatus
 from yla.pipeline.discovery import DiscoveryReport, discover_videos
+from yla.pipeline.enrich import enrich_videos
+from yla.youtube.data_api import MetadataProvider
 from yla.youtube.rss import FeedFetcher
 from yla.youtube.transcripts import TranscriptProvider, TranscriptSink, TranscriptStatus
 
@@ -28,7 +30,8 @@ logger = logging.getLogger(__name__)
 
 # Statuses that may still need (or benefit from) captions. ANALYZED without a transcript means
 # the summary was a ⭐ title/description guess: captions found later upgrade it.
-NEEDS_TRANSCRIPT = (VideoStatus.PENDING, VideoStatus.DEFERRED, VideoStatus.WAITING, VideoStatus.ANALYZED)
+# Unfinished streams (WAITING) are left out: they have no captions yet.
+NEEDS_TRANSCRIPT = (VideoStatus.PENDING, VideoStatus.DEFERRED, VideoStatus.ANALYZED)
 
 
 @dataclass
@@ -118,6 +121,7 @@ def run_local_worker(
     *,
     now: datetime,
     feed_fetcher: FeedFetcher | None = None,
+    metadata: MetadataProvider | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> WorkerReport:
     """Discover + fetch captions, recorded as a ``local_worker`` job so the cloud side (and the
@@ -130,6 +134,10 @@ def run_local_worker(
     try:
         if feed_fetcher is not None:
             discovery = discover_videos(session, user.id, feed_fetcher, now=now)
+            session.commit()
+        enriched = None
+        if metadata is not None:  # before captions, so none are fetched for Shorts
+            enriched = enrich_videos(session, user, metadata, now=now)
             session.commit()
         transcripts = fetch_transcripts(
             session, user.id, provider, sink, now=now, limit=user.daily_video_limit * 2, sleep=sleep
@@ -153,6 +161,8 @@ def run_local_worker(
         "no_captions": len(transcripts.no_captions),
         "errors": len(transcripts.errors),
         "blocked": transcripts.blocked,
+        "shorts_skipped": len(enriched.shorts) if enriched else None,
+        "metadata_error": enriched.error if enriched else None,
     }
     job.status, job.finished_at = JobStatus.SUCCEEDED, now
     session.commit()
