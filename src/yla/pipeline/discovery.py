@@ -36,26 +36,34 @@ def discover_videos(
     session: Session, user_id: int, fetcher: FeedFetcher, *, now: datetime
 ) -> DiscoveryReport:
     report = DiscoveryReport()
-    rows = session.execute(
-        select(Channel, Subscription)
-        .join(Subscription, Subscription.channel_id == Channel.id)
-        .where(Subscription.user_id == user_id, Subscription.enabled.is_(True))
-        .order_by(Channel.id)
-    ).all()
+    targets = [
+        (channel_pk, youtube_id, handle)
+        for channel_pk, youtube_id, handle in session.execute(
+            select(Channel.id, Channel.youtube_channel_id, Channel.handle)
+            .join(Subscription, Subscription.channel_id == Channel.id)
+            .where(Subscription.user_id == user_id, Subscription.enabled.is_(True))
+            .order_by(Channel.id)
+        )
+    ]
+    # Never hold a transaction open while waiting on the network: feed retries can take minutes
+    # and the database (Neon) terminates idle-in-transaction connections.
+    session.commit()
 
-    for channel, sub in rows:
-        if channel.youtube_channel_id is None:
-            report.skipped_without_id.append(channel.handle)
+    for channel_pk, youtube_id, handle in targets:
+        if youtube_id is None:
+            report.skipped_without_id.append(handle)
             continue
         try:
-            feed = fetcher.fetch(channel.youtube_channel_id)
+            feed = fetcher.fetch(youtube_id)
         except (httpx.HTTPError, FeedNotFoundError, FeedParseError) as exc:
             # Leave last_checked_at untouched so a first read keeps its backfill semantics.
-            logger.warning("feed failed for %s: %s", channel.handle, exc)
-            report.failed_channels[channel.handle] = f"{type(exc).__name__}: {exc}"
+            logger.warning("feed failed for %s: %s", handle, exc)
+            report.failed_channels[handle] = f"{type(exc).__name__}: {exc}"
             continue
 
         report.channels_checked += 1
+        channel = session.get_one(Channel, channel_pk)
+        sub = session.get_one(Subscription, (user_id, channel_pk))
         if channel.title is None and feed.channel_title:
             channel.title = feed.channel_title
 
@@ -87,6 +95,6 @@ def discover_videos(
             else:
                 report.new_videos.extend(inserted)
         sub.last_checked_at = now
+        session.commit()
 
-    session.flush()
     return report

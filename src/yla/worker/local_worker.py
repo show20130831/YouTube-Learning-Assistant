@@ -80,27 +80,33 @@ def fetch_transcripts(
 ) -> TranscriptFetchReport:
     """Fetch and store captions, committing after each video so progress survives a crash."""
     report = TranscriptFetchReport()
-    videos = select_transcript_candidates(session, user_id, now=now, lookback_days=lookback_days, limit=limit)
+    candidates = [
+        (v.id, v.youtube_video_id)
+        for v in select_transcript_candidates(
+            session, user_id, now=now, lookback_days=lookback_days, limit=limit
+        )
+    ]
+    session.commit()  # no transaction may stay open while waiting on YouTube
 
-    for index, video in enumerate(videos):
+    for index, (video_pk, video_id) in enumerate(candidates):
         if index:
             sleep(delay_seconds)  # stay well below anything resembling scraping
         report.attempted += 1
-        result = provider.fetch(video.youtube_video_id)
+        result = provider.fetch(video_id)
 
         if result.status is TranscriptStatus.BLOCKED:
             logger.warning("YouTube blocked caption requests (%s); stopping", result.error)
             report.blocked = True
-            report.errors[video.youtube_video_id] = result.error or "blocked"
+            report.errors[video_id] = result.error or "blocked"
             break
         if result.has_text:
-            sink.save(video.id, result)
+            sink.save(video_pk, result)
             session.commit()
-            report.saved[video.youtube_video_id] = result.status
+            report.saved[video_id] = result.status
         elif result.status is TranscriptStatus.NONE:
-            report.no_captions.append(video.youtube_video_id)
+            report.no_captions.append(video_id)
         else:
-            report.errors[video.youtube_video_id] = result.error or result.status.value
+            report.errors[video_id] = result.error or result.status.value
     return report
 
 

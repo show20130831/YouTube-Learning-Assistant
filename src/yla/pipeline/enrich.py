@@ -57,8 +57,10 @@ def enrich_videos(session: Session, user: User, provider: MetadataProvider, *, n
     if not videos:
         return report
 
+    video_ids = [v.youtube_video_id for v in videos]
+    session.commit()  # no transaction may stay open while waiting on the API
     try:
-        found = provider.fetch([v.youtube_video_id for v in videos])
+        found = provider.fetch(video_ids)
     except MetadataError as exc:
         logger.warning("YouTube Data API unavailable, treating videos as ordinary: %s", exc)
         report.error = str(exc)[:300]

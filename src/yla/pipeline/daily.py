@@ -184,8 +184,10 @@ def _process(
         if budget <= 0 or report.quota_exhausted:
             _defer(video, now, report)
             continue
+        title = video.title
+        session.commit()  # no transaction may stay open during a (possibly minutes-long) LLM call
         try:
-            outcome = analyzer.analyze(title=video.title, channel=candidate.channel_name, tier=candidate.tier)
+            outcome = analyzer.analyze(title=title, channel=candidate.channel_name, tier=candidate.tier)
         except AnalysisFailed as exc:
             report.llm_calls += exc.calls
             video.last_error = str(exc)[:2000]
