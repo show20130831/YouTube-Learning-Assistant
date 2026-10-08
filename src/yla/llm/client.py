@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypedDict
 
@@ -37,6 +38,10 @@ class LLMError(Exception):
 
 class LLMRateLimited(LLMError):
     """429: daily free quota used up or the upstream provider is busy. Try another model."""
+
+
+class LLMTimeout(LLMError):
+    """No complete reply within the request deadline. Try another model."""
 
 
 class LLMOutputInvalid(LLMError):
@@ -72,12 +77,14 @@ class OpenRouterClient:
         client: httpx.Client,
         *,
         temperature: float = 0.2,
+        request_timeout: float = 180.0,
         attempts: int = 3,
         backoff_seconds: float = 2.0,
     ) -> None:
         self._api_key = api_key
         self._client = client
         self._temperature = temperature
+        self._request_timeout = request_timeout
         self._post = retry(
             retry=retry_if_exception_type((_TransientError, httpx.TransportError)),
             stop=stop_after_attempt(attempts),
@@ -111,12 +118,26 @@ class OpenRouterClient:
         )
 
     def _post_once(self, payload: dict[str, Any]) -> dict[str, Any]:
-        response = self._client.post(
+        # OpenRouter answers "200" at once and then sends keep-alive whitespace until the model
+        # finishes, so httpx's read timeout never fires and a slow model could hang forever.
+        # Enforce an overall deadline while reading the stream instead.
+        deadline = time.monotonic() + self._request_timeout
+        chunks: list[bytes] = []
+        with self._client.stream(
+            "POST",
             OPENROUTER_URL,
             json=payload,
             headers={"Authorization": f"Bearer {self._api_key}", "X-Title": "YouTube Learning Assistant"},
-        )
-        body: dict[str, Any] = response.json() if response.content else {}
+        ) as response:
+            for chunk in response.iter_bytes():
+                chunks.append(chunk)
+                if time.monotonic() > deadline:
+                    raise LLMTimeout(f"no complete reply within {self._request_timeout:.0f}s")
+        raw = b"".join(chunks).strip()
+        try:
+            body: dict[str, Any] = json.loads(raw) if raw else {}
+        except json.JSONDecodeError as exc:
+            raise LLMError(f"HTTP {response.status_code}: response is not JSON") from exc
         # OpenRouter can also report provider errors inside a 200 response.
         error = body.get("error") or {}
         status = int(error.get("code") or response.status_code) if error else response.status_code

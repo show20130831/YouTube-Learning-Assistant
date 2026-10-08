@@ -47,7 +47,7 @@ def _configure_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
-@app.function(schedule=modal.Cron("0 11 * * *", timezone=TIMEZONE), timeout=30 * 60)
+@app.function(schedule=modal.Cron("0 11 * * *", timezone=TIMEZONE), timeout=60 * 60)
 def daily_pipeline(skip_discover: bool = False) -> None:
     """Same as ``yla run``; a failure exits non-zero so Modal marks the run failed."""
     from yla.cli import run_command

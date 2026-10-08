@@ -1,4 +1,5 @@
 import json
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -10,6 +11,7 @@ from yla.llm.client import (
     LLMError,
     LLMOutputInvalid,
     LLMRateLimited,
+    LLMTimeout,
     OpenRouterClient,
     parse_json_reply,
 )
@@ -104,3 +106,34 @@ def test_parse_json_reply_tolerates_code_fences(content: str) -> None:
 def test_parse_json_reply_rejects_non_objects() -> None:
     with pytest.raises(LLMOutputInvalid):
         parse_json_reply("[1, 2]")
+
+
+@respx.mock
+def test_slow_reply_hits_the_overall_deadline() -> None:
+    """OpenRouter keeps the connection alive with whitespace, so only a total deadline stops it."""
+    import time
+
+    def slow_stream() -> Iterator[bytes]:
+        for _ in range(5):
+            time.sleep(0.05)
+            yield b" "
+        yield b'{"choices": []}'
+
+    respx.post(OPENROUTER_URL).mock(return_value=httpx.Response(200, content=slow_stream()))
+    client = OpenRouterClient("sk", httpx.Client(), backoff_seconds=0, request_timeout=0.1)
+    with pytest.raises(LLMTimeout):
+        call(client)
+
+
+@respx.mock
+def test_keep_alive_whitespace_before_reply_is_ignored(client: OpenRouterClient) -> None:
+    body = b"\n\n   "  # keep-alive whitespace sent while the model is working
+    respx.post(OPENROUTER_URL).respond(200, content=body + json.dumps(reply('{"a": 2}')).encode())
+    assert call(client).data == {"a": 2}
+
+
+@respx.mock
+def test_non_json_body_raises(client: OpenRouterClient) -> None:
+    respx.post(OPENROUTER_URL).respond(502, content=b"<html>bad gateway</html>")
+    with pytest.raises(LLMError):
+        call(client)
