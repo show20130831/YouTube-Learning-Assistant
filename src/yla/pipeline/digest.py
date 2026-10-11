@@ -34,6 +34,8 @@ from yla.db.models import (
 )
 from yla.notify.formatter import DigestData, DigestVideo, build_messages
 from yla.notify.line import Notifier, NotifyError
+from yla.ops.jobs import start_job
+from yla.ops.logging import run_context
 from yla.pipeline.daily import JOB_NAME as DAILY_JOB_NAME
 from yla.worker.local_worker import JOB_NAME as WORKER_JOB_NAME
 
@@ -238,21 +240,20 @@ def send_digest(session: Session, user: User, notifier: Notifier, *, now: dateti
         MESSAGE_SEPARATOR.join(messages),
         None,
     )
-    job = JobRun(job_name=JOB_NAME, status=JobStatus.RUNNING, stats={"messages": len(messages)})
-    session.add(job)
-    session.commit()  # the retry key must be stored before pushing
+    # Also commits the digest row: the retry key must be stored before pushing.
+    job = start_job(session, JOB_NAME, now=now, stats={"messages": len(messages)})
+    with run_context(job.id):
+        try:
+            delivered = notifier.push(messages, retry_key=digest.retry_key)
+        except NotifyError as exc:
+            digest.status, digest.error = DigestStatus.FAILED, str(exc)[:2000]
+            job.status, job.error, job.finished_at = JobStatus.FAILED, digest.error, now
+            session.commit()
+            logger.error("digest push failed: %s", exc)
+            return DigestOutcome(status="failed", day=day, messages=messages, error=digest.error)
 
-    try:
-        delivered = notifier.push(messages, retry_key=digest.retry_key)
-    except NotifyError as exc:
-        digest.status, digest.error = DigestStatus.FAILED, str(exc)[:2000]
-        job.status, job.error, job.finished_at = JobStatus.FAILED, digest.error, now
+        digest.status, digest.sent_at = DigestStatus.SENT, now
+        job.status, job.finished_at = JobStatus.SUCCEEDED, now
+        job.stats = {**job.stats, "delivered": delivered}
         session.commit()
-        logger.error("digest push failed: %s", exc)
-        return DigestOutcome(status="failed", day=day, messages=messages, error=digest.error)
-
-    digest.status, digest.sent_at = DigestStatus.SENT, now
-    job.status, job.finished_at = JobStatus.SUCCEEDED, now
-    job.stats = {**job.stats, "delivered": delivered}
-    session.commit()
-    return DigestOutcome(status="sent", day=day, messages=messages)
+        return DigestOutcome(status="sent", day=day, messages=messages)

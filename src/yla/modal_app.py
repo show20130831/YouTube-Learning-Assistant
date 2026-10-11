@@ -22,6 +22,8 @@ from pathlib import Path
 
 import modal
 
+from yla.ops.jobs import git_sha
+
 # This module is imported both locally (to build and deploy) and inside the container, where it
 # lives at /root/modal_app.py; project paths only exist locally.
 PROJECT_ROOT = Path(__file__).resolve().parents[2] if modal.is_local() else Path("/root")
@@ -32,7 +34,8 @@ TIMEZONE = "Asia/Taipei"
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .uv_sync(str(PROJECT_ROOT), extra_options="--no-dev")
-    .env({"PYTHONUNBUFFERED": "1"})
+    # The code version is fixed at deploy time: the container has no git checkout.
+    .env({"PYTHONUNBUFFERED": "1", "YLA_GIT_SHA": git_sha() if modal.is_local() else "unknown"})
     .workdir(REMOTE_ROOT)
     .add_local_python_source("yla")
 )
@@ -44,7 +47,9 @@ app = modal.App("youtube-learning-assistant", image=image, secrets=[modal.Secret
 
 
 def _configure_logging() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    from yla.ops.logging import configure_logging
+
+    configure_logging(logging.INFO)
 
 
 @app.function(schedule=modal.Cron("0 11 * * *", timezone=TIMEZONE), timeout=60 * 60)

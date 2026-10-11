@@ -16,7 +16,6 @@ remaining videos are deferred instead of failing.
 from __future__ import annotations
 
 import logging
-import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -24,11 +23,13 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yla.analysis.analyzer import AnalysisFailed, Analyzer, store_analysis
+from yla.analysis.analyzer import AnalysisFailed, Analyzer, Attempt, store_analysis
 from yla.analysis.topics import TopicMatcher
 from yla.config import AppSettings
 from yla.content.tiering import ContentTier, choose_content
 from yla.db.models import Analysis, Channel, JobRun, JobStatus, Subscription, User, Video, VideoStatus
+from yla.ops.jobs import config_fingerprint, start_job
+from yla.ops.logging import run_context
 from yla.pipeline.discovery import DiscoveryReport, discover_videos
 from yla.pipeline.enrich import enrich_videos
 from yla.youtube.data_api import MetadataProvider
@@ -57,6 +58,18 @@ class DailyReport:
     shorts_skipped: int = 0
     waiting: int = 0
     metadata_error: str | None = None
+    config_fingerprint: str | None = None
+    # LLM health: results per model, and how often the primary model did not produce the result.
+    model_outcomes: dict[str, dict[str, int]] = field(default_factory=dict)
+    analysis_attempts: int = 0
+    primary_failures: int = 0
+
+    def record_llm(self, attempts: list[Attempt], *, primary_ok: bool) -> None:
+        self.analysis_attempts += 1
+        self.primary_failures += 0 if primary_ok else 1
+        for model, result in attempts:
+            counts = self.model_outcomes.setdefault(model, {})
+            counts[result] = counts.get(result, 0) + 1
 
     def stats(self) -> dict[str, object]:
         data = asdict(self)
@@ -110,12 +123,26 @@ def run_daily_pipeline(
     feed_fetcher: FeedFetcher | None = None,
     metadata: MetadataProvider | None = None,
 ) -> DailyReport:
-    report = DailyReport(run_id=uuid.uuid4().hex[:8])
-    job = JobRun(job_name=JOB_NAME, status=JobStatus.RUNNING, stats={"run_id": report.run_id})
-    session.add(job)
-    session.commit()
-    logger.info("daily pipeline %s started", report.run_id)
+    fingerprint = config_fingerprint(settings)
+    job = start_job(session, JOB_NAME, now=now, stats={"config_fingerprint": fingerprint})
+    report = DailyReport(run_id=str(job.id), config_fingerprint=fingerprint)
+    with run_context(job.id):
+        return _run(session, user, settings, analyzer, job, report, now, feed_fetcher, metadata)
 
+
+def _run(
+    session: Session,
+    user: User,
+    settings: AppSettings,
+    analyzer: Analyzer,
+    job: JobRun,
+    report: DailyReport,
+    now: datetime,
+    feed_fetcher: FeedFetcher | None,
+    metadata: MetadataProvider | None,
+) -> DailyReport:
+    base_stats = dict(job.stats)  # git_sha, expired_stale_runs
+    logger.info("daily pipeline started")
     try:
         if feed_fetcher is not None:
             discovery: DiscoveryReport = discover_videos(session, user.id, feed_fetcher, now=now)
@@ -132,13 +159,13 @@ def run_daily_pipeline(
     except Exception as exc:
         session.rollback()
         job.status, job.error = JobStatus.FAILED, f"{type(exc).__name__}: {exc}"[:2000]
-        job.finished_at, job.stats = now, report.stats()
+        job.finished_at, job.stats = now, {**base_stats, **report.stats()}
         session.commit()
         raise
 
-    job.status, job.finished_at, job.stats = JobStatus.SUCCEEDED, now, report.stats()
+    job.status, job.finished_at, job.stats = JobStatus.SUCCEEDED, now, {**base_stats, **report.stats()}
     session.commit()
-    logger.info("daily pipeline %s finished: %s", report.run_id, job.stats)
+    logger.info("daily pipeline finished: %s", job.stats)
     return report
 
 
@@ -190,6 +217,7 @@ def _process(
             outcome = analyzer.analyze(title=title, channel=candidate.channel_name, tier=candidate.tier)
         except AnalysisFailed as exc:
             report.llm_calls += exc.calls
+            report.record_llm(exc.attempts, primary_ok=False)
             video.last_error = str(exc)[:2000]
             if exc.rate_limited:
                 report.quota_exhausted = True
@@ -205,6 +233,7 @@ def _process(
             continue
 
         report.llm_calls += outcome.calls
+        report.record_llm(outcome.attempts, primary_ok=outcome.primary_ok)
         store_analysis(session, video=video, user_id=user.id, outcome=outcome)
         report.analyzed.append(video.youtube_video_id)
         budget -= 1

@@ -19,7 +19,9 @@ from datetime import datetime, timedelta
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
-from yla.db.models import JobRun, JobStatus, Subscription, Transcript, User, Video, VideoStatus
+from yla.db.models import JobStatus, Subscription, Transcript, User, Video, VideoStatus
+from yla.ops.jobs import start_job
+from yla.ops.logging import run_context
 from yla.pipeline.discovery import DiscoveryReport, discover_videos
 from yla.pipeline.enrich import enrich_videos
 from yla.youtube.data_api import MetadataProvider
@@ -132,44 +134,42 @@ def run_local_worker(
 ) -> WorkerReport:
     """Discover + fetch captions, recorded as a ``local_worker`` job so the cloud side (and the
     LINE digest) can tell whether the home computer did its part today."""
-    job = JobRun(job_name=JOB_NAME, status=JobStatus.RUNNING, stats={"host": socket.gethostname()})
-    session.add(job)
-    session.commit()
+    job = start_job(session, JOB_NAME, now=now, stats={"host": socket.gethostname()})
+    with run_context(job.id):
+        discovery: DiscoveryReport | None = None
+        try:
+            if feed_fetcher is not None:
+                discovery = discover_videos(session, user.id, feed_fetcher, now=now)
+                session.commit()
+            enriched = None
+            if metadata is not None:  # before captions, so none are fetched for Shorts
+                enriched = enrich_videos(session, user, metadata, now=now)
+                session.commit()
+            transcripts = fetch_transcripts(
+                session, user.id, provider, sink, now=now, limit=user.daily_video_limit * 2, sleep=sleep
+            )
+        except Exception as exc:
+            session.rollback()
+            job.status, job.error = JobStatus.FAILED, f"{type(exc).__name__}: {exc}"[:2000]
+            job.finished_at = now
+            session.commit()
+            raise
 
-    discovery: DiscoveryReport | None = None
-    try:
-        if feed_fetcher is not None:
-            discovery = discover_videos(session, user.id, feed_fetcher, now=now)
-            session.commit()
-        enriched = None
-        if metadata is not None:  # before captions, so none are fetched for Shorts
-            enriched = enrich_videos(session, user, metadata, now=now)
-            session.commit()
-        transcripts = fetch_transcripts(
-            session, user.id, provider, sink, now=now, limit=user.daily_video_limit * 2, sleep=sleep
-        )
-    except Exception as exc:
-        session.rollback()
-        job.status, job.error = JobStatus.FAILED, f"{type(exc).__name__}: {exc}"[:2000]
-        job.finished_at = now
+        saved = list(transcripts.saved.values())
+        job.stats = {
+            **job.stats,
+            "new_videos": len(discovery.new_videos) if discovery else None,
+            "feed_errors": discovery.failed_channels if discovery else {},
+            "attempted": transcripts.attempted,
+            "saved": len(saved),
+            "manual": saved.count(TranscriptStatus.MANUAL),
+            "auto": saved.count(TranscriptStatus.GENERATED),
+            "no_captions": len(transcripts.no_captions),
+            "errors": len(transcripts.errors),
+            "blocked": transcripts.blocked,
+            "shorts_skipped": len(enriched.shorts) if enriched else None,
+            "metadata_error": enriched.error if enriched else None,
+        }
+        job.status, job.finished_at = JobStatus.SUCCEEDED, now
         session.commit()
-        raise
-
-    saved = list(transcripts.saved.values())
-    job.stats = {
-        **job.stats,
-        "new_videos": len(discovery.new_videos) if discovery else None,
-        "feed_errors": discovery.failed_channels if discovery else {},
-        "attempted": transcripts.attempted,
-        "saved": len(saved),
-        "manual": saved.count(TranscriptStatus.MANUAL),
-        "auto": saved.count(TranscriptStatus.GENERATED),
-        "no_captions": len(transcripts.no_captions),
-        "errors": len(transcripts.errors),
-        "blocked": transcripts.blocked,
-        "shorts_skipped": len(enriched.shorts) if enriched else None,
-        "metadata_error": enriched.error if enriched else None,
-    }
-    job.status, job.finished_at = JobStatus.SUCCEEDED, now
-    session.commit()
-    return WorkerReport(discovery=discovery, transcripts=transcripts)
+        return WorkerReport(discovery=discovery, transcripts=transcripts)

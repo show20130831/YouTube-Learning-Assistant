@@ -23,20 +23,42 @@ from yla.analysis.topics import TopicMatcher
 from yla.config import TopicConfig
 from yla.content.tiering import ContentTier
 from yla.db.models import Analysis, SourceType, UserVideoRelevance, Video, VideoStatus
-from yla.llm.client import ChatMessage, LLMClient, LLMError, LLMOutputInvalid, LLMRateLimited
+from yla.llm.client import ChatMessage, LLMClient, LLMError, LLMOutputInvalid, LLMRateLimited, LLMTimeout
 from yla.llm.prompts import PROMPT_VERSION, build_messages
 from yla.llm.schemas import ANALYSIS_JSON_SCHEMA, ANALYSIS_SCHEMA_NAME, VideoAnalysis, normalize
 
 logger = logging.getLogger(__name__)
 
 
+# Per-request results, recorded for operations metrics (which models fail, and how).
+Attempt = tuple[str, str]  # (model, "ok" | "timeout" | "rate_limited" | "invalid" | "error")
+
+
+def _attempt_result(exc: Exception) -> str:
+    if isinstance(exc, LLMTimeout):
+        return "timeout"
+    if isinstance(exc, LLMRateLimited):
+        return "rate_limited"
+    if isinstance(exc, LLMOutputInvalid | ValidationError):
+        return "invalid"
+    return "error"
+
+
 class AnalysisFailed(Exception):
-    def __init__(self, errors: dict[str, str], calls: int, *, rate_limited: bool = False) -> None:
+    def __init__(
+        self,
+        errors: dict[str, str],
+        calls: int,
+        *,
+        rate_limited: bool = False,
+        attempts: list[Attempt] | None = None,
+    ) -> None:
         super().__init__("; ".join(f"{model}: {error}" for model, error in errors.items()))
         self.errors = errors
         self.calls = calls
         # Every model answered 429: the free daily quota is most likely used up for today.
         self.rate_limited = rate_limited
+        self.attempts = attempts or []
 
 
 @dataclass(frozen=True)
@@ -48,6 +70,8 @@ class AnalysisOutcome:
     raw: dict[str, object]
     calls: int
     errors: dict[str, str] = field(default_factory=dict)  # models that failed before one succeeded
+    attempts: list[Attempt] = field(default_factory=list)
+    primary_ok: bool = True  # the first configured model produced the result
 
 
 MIN_SCORE_WITH_TOPICS = 40
@@ -85,6 +109,7 @@ class Analyzer:
         calls = 0
         errors: dict[str, str] = {}
         rate_limited: set[str] = set()
+        attempts: list[Attempt] = []
         for model in self._models:
             attempt_messages = list(messages)
             for attempt in (1, 2):
@@ -98,12 +123,14 @@ class Analyzer:
                     )
                     parsed = VideoAnalysis.model_validate(response.data)
                 except (LLMOutputInvalid, ValidationError) as exc:
+                    attempts.append((model, _attempt_result(exc)))
                     errors[model] = f"invalid output: {str(exc)[:200]}"
                     if attempt == 1:
                         attempt_messages = [*messages, _fix_request(exc)]
                         continue
                     break
                 except LLMError as exc:
+                    attempts.append((model, _attempt_result(exc)))
                     errors[model] = f"{type(exc).__name__}: {exc}"
                     if isinstance(exc, LLMRateLimited):
                         rate_limited.add(model)
@@ -118,6 +145,7 @@ class Analyzer:
                 if truncated and not analysis.limitation:
                     analysis = analysis.model_copy(update={"limitation": "內容過長，只分析了前段。"})
                 errors.pop(model, None)
+                attempts.append((model, "ok"))
                 return AnalysisOutcome(
                     analysis=analysis,
                     tier=tier,
@@ -126,9 +154,11 @@ class Analyzer:
                     raw=response.data,
                     calls=calls,
                     errors=errors,
+                    attempts=attempts,
+                    primary_ok=model == self._models[0],
                 )
             logger.warning("model %s failed: %s", model, errors.get(model))
-        raise AnalysisFailed(errors, calls, rate_limited=rate_limited == set(self._models))
+        raise AnalysisFailed(errors, calls, rate_limited=rate_limited == set(self._models), attempts=attempts)
 
     def _reconcile_topics(self, analysis: VideoAnalysis, title: str) -> VideoAnalysis:
         """Add topics found deterministically in keywords, concepts and the title, and keep the

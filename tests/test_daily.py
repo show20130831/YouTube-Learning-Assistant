@@ -285,3 +285,28 @@ def test_cli_run_reports_quota_exhausted(cli_db: tuple[Engine, Path]) -> None:
     result = CliRunner().invoke(cli.app, ["run", "--skip-discover", "--path", str(cli_db[1])])
     assert result.exit_code == 0, result.output
     assert "free quota appears used up" in result.output
+
+
+def test_llm_outcomes_and_config_are_recorded(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    from yla.llm.client import LLMTimeout
+    from yla.ops.jobs import config_fingerprint
+
+    monkeypatch.setenv("YLA_GIT_SHA", "abc1234")
+    settings = make_settings()
+    setup(session, settings)
+    add_video(session, "slow")
+    add_video(session, "fine", days_ago=0.1)
+
+    class PrimaryTimesOutOnce(ScriptedLLM):
+        def complete_json(self, messages, *, schema, schema_name, model):  # type: ignore[no-untyped-def]
+            title = messages[1]["content"].splitlines()[0].removeprefix("影片標題：")
+            if model == "m1" and title == "Video slow":
+                raise LLMTimeout("no complete reply within 180s")
+            return super().complete_json(messages, schema=schema, schema_name=schema_name, model=model)
+
+    run(session, settings, PrimaryTimesOutOnce())
+    stats = session.scalars(select(JobRun.stats)).one()
+    assert stats["model_outcomes"] == {"m1": {"timeout": 1, "ok": 1}, "m2": {"ok": 1}}
+    assert (stats["analysis_attempts"], stats["primary_failures"]) == (2, 1)
+    assert stats["config_fingerprint"] == config_fingerprint(settings)
+    assert stats["git_sha"] == "abc1234"

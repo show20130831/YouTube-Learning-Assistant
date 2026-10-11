@@ -38,6 +38,12 @@ SettingsPath = Annotated[Path, typer.Option("--path", "-p", help="Settings YAML 
 @app.callback()
 def main() -> None:
     """YouTube Learning Assistant."""
+    import logging
+
+    from yla.ops.logging import configure_logging
+
+    # Warnings and errors (with the run ID) go to stderr, e.g. into logs/worker.log.
+    configure_logging(logging.WARNING)
 
 
 def _fail(message: str) -> typer.Exit:
