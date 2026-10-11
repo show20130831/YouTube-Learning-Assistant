@@ -209,6 +209,50 @@ def worker_command(
         raise typer.Exit(code=2)
 
 
+@app.command("health")
+def health_command(path: SettingsPath = DEFAULT_SETTINGS_PATH) -> None:
+    """Check services, configuration and usage (never calls the LLM). Exit code 1 on any failure."""
+    from yla.ops.health import CheckResult, Section, Status, run_health_checks
+
+    secrets = Secrets()
+    extra: list[CheckResult] = []
+    settings: AppSettings | None = None
+    try:
+        settings = load_settings(path)
+    except (FileNotFoundError, ValidationError) as exc:
+        extra.append(
+            CheckResult(Section.CONNECTIVITY, "Settings", Status.FAIL, str(exc).splitlines()[0][:120])
+        )
+
+    engine = make_engine(secrets.database_url.get_secret_value()) if secrets.database_url else None
+    session = Session(engine) if engine else None
+    try:
+        with httpx.Client(timeout=20) as client:
+            results = extra + run_health_checks(
+                secrets=secrets, settings=settings, session=session, client=client, now=datetime.now(UTC)
+            )
+    finally:
+        if session is not None:
+            session.close()
+        if engine is not None:
+            engine.dispose()
+
+    marks = {Status.OK: "OK  ", Status.WARN: "WARN", Status.FAIL: "FAIL", Status.INFO: "INFO"}
+    colors = {Status.OK: typer.colors.GREEN, Status.WARN: typer.colors.YELLOW, Status.FAIL: typer.colors.RED}
+    for section in Section:
+        typer.echo("")
+        typer.echo(section.value)
+        for result in (r for r in results if r.section is section):
+            typer.secho(f"  {marks[result.status]}  ", fg=colors.get(result.status), nl=False)
+            typer.echo(f"{result.name}: {result.detail}")
+    failures = sum(r.status is Status.FAIL for r in results)
+    warnings = sum(r.status is Status.WARN for r in results)
+    typer.echo("")
+    typer.echo(f"{failures} failure(s), {warnings} warning(s)")
+    if failures:
+        raise typer.Exit(code=1)
+
+
 @app.command("status")
 def status_command(
     days: Annotated[int, typer.Option(help="How many days of job runs to show")] = 3,
