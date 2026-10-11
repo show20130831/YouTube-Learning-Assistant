@@ -19,15 +19,22 @@ def normalize_url(url: str) -> str:
     return url
 
 
+CONNECT_TIMEOUT_SECONDS = 10
+
+
 def connect_args(url: str) -> dict[str, Any]:
     """Driver options for the given URL.
 
-    Behind a transaction-mode pooler (Neon's ``-pooler`` hosts, PgBouncer) a connection can
-    change between statements, so psycopg's automatic server-side prepared statements are
-    turned off there.
+    - A connection timeout, so an unreachable database fails a job in seconds rather than minutes.
+    - Behind a transaction-mode pooler (Neon's ``-pooler`` hosts, PgBouncer) a connection can
+      change between statements, so psycopg's automatic server-side prepared statements are
+      turned off there.
     """
     host = make_url(normalize_url(url)).host or ""
-    return {"prepare_threshold": None} if "-pooler" in host else {}
+    args: dict[str, Any] = {"connect_timeout": CONNECT_TIMEOUT_SECONDS}
+    if "-pooler" in host:
+        args["prepare_threshold"] = None
+    return args
 
 
 def make_engine(url: str) -> Engine:

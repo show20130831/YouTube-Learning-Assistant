@@ -105,10 +105,13 @@ def test_example_settings_have_channel_ids() -> None:
     [
         (
             "postgresql://u:p@ep-x-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
-            {"prepare_threshold": None},
+            {"connect_timeout": 10, "prepare_threshold": None},
         ),
-        ("postgresql://u:p@ep-x.ap-southeast-1.aws.neon.tech/neondb?sslmode=require", {}),
-        ("postgresql+psycopg://yla:yla@localhost:5432/yla", {}),
+        (
+            "postgresql://u:p@ep-x.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
+            {"connect_timeout": 10},
+        ),
+        ("postgresql+psycopg://yla:yla@localhost:5432/yla", {"connect_timeout": 10}),
     ],
 )
 def test_prepared_statements_disabled_behind_a_pooler(url: str, expected: dict[str, object]) -> None:

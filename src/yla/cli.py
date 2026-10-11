@@ -19,6 +19,8 @@ from yla.config import DEFAULT_SETTINGS_PATH, AppSettings, Secrets, load_setting
 from yla.db.models import User, Video
 from yla.db.session import make_engine, session_scope
 from yla.llm.client import OpenRouterClient
+from yla.ops.heartbeat import ping
+from yla.pipeline.digest import DigestOutcome
 from yla.pipeline.discovery import DiscoveryReport, discover_videos
 from yla.sync import sync_config
 from yla.youtube.channels import resolve_missing_channel_ids
@@ -329,35 +331,53 @@ def digest_command(
     ] = False,
 ) -> None:
     """Send today's study digest to LINE (at most once per day)."""
-    from yla.notify.line import LineNotifier
-    from yla.pipeline.digest import collect_digest, send_digest
+    from yla.pipeline.digest import collect_digest
 
-    secrets = Secrets()
-    with _db_session() as session:
-        user = _user_or_exit(session)
-        now = datetime.now(UTC)
-        if dry_run:
-            from yla.notify.formatter import build_messages
+    if dry_run:
+        from yla.notify.formatter import build_messages
 
-            messages = build_messages(collect_digest(session, user, now=now))
+        with _db_session() as session:
+            messages = build_messages(collect_digest(session, _user_or_exit(session), now=datetime.now(UTC)))
             session.rollback()
-            for i, message in enumerate(messages, 1):
-                typer.echo(f"----- message {i}/{len(messages)} -----")
-                typer.echo(message)
-            return
+        for i, message in enumerate(messages, 1):
+            typer.echo(f"----- message {i}/{len(messages)} -----")
+            typer.echo(message)
+        return
 
-        token, to = secrets.line_channel_access_token, user.line_user_id or secrets.line_user_id
-        if token is None or not to:
-            raise _fail("LINE_CHANNEL_ACCESS_TOKEN and LINE_USER_ID must be set (see .env.example)")
-        with httpx.Client(timeout=30) as client:
-            outcome = send_digest(session, user, LineNotifier(token.get_secret_value(), to, client), now=now)
+    # The heartbeat is the outside check that the digest really went out today (see ops.heartbeat):
+    # success is reported only after LINE accepted it; any failure, even a crash, is reported too.
+    heartbeat_url = Secrets().heartbeat_url
+    url = heartbeat_url.get_secret_value() if heartbeat_url else None
+    try:
+        outcome = _send_digest_now()
+    except Exception as exc:
+        with httpx.Client() as client:
+            ping(url, client, ok=False, message=f"{type(exc).__name__}: {exc}")
+        raise
 
+    with httpx.Client() as client:
+        ping(url, client, ok=outcome.status != "failed", message=outcome.error or outcome.status)
     if outcome.status == "already_sent":
         typer.echo(f"Digest for {outcome.day} was already sent; nothing to do.")
     elif outcome.status == "failed":
         raise _fail(f"Digest for {outcome.day} could not be sent: {outcome.error}")
     else:
         typer.echo(f"Sent digest for {outcome.day} ({len(outcome.messages)} messages).")
+
+
+def _send_digest_now() -> DigestOutcome:
+    from yla.notify.line import LineNotifier
+    from yla.pipeline.digest import send_digest
+
+    secrets = Secrets()
+    with _db_session() as session:
+        user = _user_or_exit(session)
+        token, to = secrets.line_channel_access_token, user.line_user_id or secrets.line_user_id
+        if token is None or not to:
+            raise _fail("LINE_CHANNEL_ACCESS_TOKEN and LINE_USER_ID must be set (see .env.example)")
+        with httpx.Client(timeout=30) as client:
+            notifier = LineNotifier(token.get_secret_value(), to, client)
+            return send_digest(session, user, notifier, now=datetime.now(UTC))
 
 
 @app.command("analyze")

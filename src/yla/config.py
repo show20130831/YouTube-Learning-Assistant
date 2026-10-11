@@ -29,6 +29,8 @@ class Secrets(BaseSettings):
     youtube_api_key: SecretStr | None = None
     line_channel_access_token: SecretStr | None = None
     line_user_id: str | None = None
+    # Optional dead-man's-switch check (Healthchecks.io or compatible); see yla.ops.heartbeat.
+    heartbeat_url: SecretStr | None = None
 
 
 class _Strict(BaseModel):

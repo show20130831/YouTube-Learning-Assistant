@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 import respx
@@ -296,3 +297,49 @@ def test_feed_failures_become_a_notice(session: Session) -> None:
     daily_job(session, feed_errors={"LangChain": "FeedNotFoundError", "statquest": "FeedNotFoundError"})
     notices = collect_digest(session, user, now=NOW).notices
     assert any("讀取 2 個頻道的 RSS 失敗" in n for n in notices)
+
+
+HEARTBEAT = "https://hc-ping.com/test-check"
+
+
+@respx.mock
+def test_cli_digest_pings_heartbeat_after_sending(cli_db: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HEARTBEAT_URL", HEARTBEAT)
+    respx.post(PUSH_URL).respond(200, json={})
+    ok = respx.post(HEARTBEAT).respond(200)
+    fail = respx.post(f"{HEARTBEAT}/fail").respond(200)
+
+    runner = CliRunner()
+    assert runner.invoke(cli.app, ["digest"]).exit_code == 0
+    assert runner.invoke(cli.app, ["digest"]).exit_code == 0  # already sent: still delivered today
+    assert (ok.call_count, fail.call_count) == (2, 0)
+
+
+@respx.mock
+def test_cli_digest_reports_failed_push_to_heartbeat(cli_db: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HEARTBEAT_URL", HEARTBEAT)
+    respx.post(PUSH_URL).respond(401, json={"message": "Authentication failed"})
+    fail = respx.post(f"{HEARTBEAT}/fail").respond(200)
+
+    assert CliRunner().invoke(cli.app, ["digest"]).exit_code == 1
+    assert b"401" in fail.calls.last.request.content
+
+
+@respx.mock
+def test_cli_digest_reports_crash_to_heartbeat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HEARTBEAT_URL", HEARTBEAT)
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://nobody:x@127.0.0.1:1/none")
+    fail = respx.post(f"{HEARTBEAT}/fail").respond(200)
+
+    result = CliRunner().invoke(cli.app, ["digest"])
+    assert result.exit_code != 0
+    assert fail.call_count == 1
+    assert b"OperationalError" in fail.calls.last.request.content
+
+
+@respx.mock
+def test_cli_digest_dry_run_never_pings(cli_db: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HEARTBEAT_URL", HEARTBEAT)
+    assert CliRunner().invoke(cli.app, ["digest", "--dry-run"]).exit_code == 0
+    assert not respx.calls
