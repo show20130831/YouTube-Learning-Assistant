@@ -34,6 +34,7 @@ from yla.db.models import (
 )
 from yla.notify.formatter import DigestData, DigestVideo, build_messages
 from yla.notify.line import Notifier, NotifyError
+from yla.ops.alerts import trend_warnings
 from yla.ops.jobs import start_job
 from yla.ops.logging import run_context
 from yla.pipeline.daily import JOB_NAME as DAILY_JOB_NAME
@@ -156,7 +157,11 @@ def collect_digest(session: Session, user: User, *, now: datetime) -> DigestData
         deferred=deferred,
         trends=_trends(session, user, now=now),
         status=worker_info,
-        notices=[*worker_warnings, *_notices(session, videos, deferred, midnight=midnight)],
+        notices=[
+            *worker_warnings,
+            *_notices(session, videos, deferred, midnight=midnight),
+            *trend_warnings(session, user, now=now),
+        ],
     )
 
 

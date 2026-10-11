@@ -124,7 +124,10 @@ def run_daily_pipeline(
     metadata: MetadataProvider | None = None,
 ) -> DailyReport:
     fingerprint = config_fingerprint(settings)
-    job = start_job(session, JOB_NAME, now=now, stats={"config_fingerprint": fingerprint})
+    primary = settings.llm.models[0] if settings.llm.models else None
+    job = start_job(
+        session, JOB_NAME, now=now, stats={"config_fingerprint": fingerprint, "primary_model": primary}
+    )
     report = DailyReport(run_id=str(job.id), config_fingerprint=fingerprint)
     with run_context(job.id):
         return _run(session, user, settings, analyzer, job, report, now, feed_fetcher, metadata)
