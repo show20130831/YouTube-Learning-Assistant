@@ -18,6 +18,7 @@ from yla.analysis.analyzer import Analyzer
 from yla.config import DEFAULT_SETTINGS_PATH, AppSettings, Secrets, load_settings
 from yla.db.models import User, Video
 from yla.db.session import make_engine, session_scope
+from yla.eval.cli import eval_app
 from yla.llm.client import OpenRouterClient
 from yla.ops.heartbeat import ping
 from yla.pipeline.digest import DigestOutcome
@@ -33,6 +34,8 @@ from yla.youtube.transcripts import (
 )
 
 app = typer.Typer(help="YouTube Learning Assistant", no_args_is_help=True)
+
+app.add_typer(eval_app, name="eval")
 
 SettingsPath = Annotated[Path, typer.Option("--path", "-p", help="Settings YAML file")]
 

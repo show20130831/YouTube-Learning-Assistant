@@ -10,3 +10,6 @@ config/settings.yaml
 .mypy_cache/
 CLAUDE.md
 logs/
+# evaluation: transcripts (copyrighted) and model outputs stay local
+eval/cache/
+eval/runs/
