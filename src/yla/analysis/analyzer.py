@@ -77,6 +77,24 @@ class AnalysisOutcome:
 MIN_SCORE_WITH_TOPICS = 40
 MAX_SCORE_WITHOUT_TOPICS = 20
 
+# Version of the deterministic post-processing (``normalize``, ``tidy_text``, ``TopicMatcher`` and
+# ``reconcile_topics``). Bump it whenever their behaviour changes, so evaluation runs are compared
+# only when their outputs were cleaned up the same way.
+RULES_VERSION = "2026-10-08.1"
+
+
+def reconcile_topics(analysis: VideoAnalysis, title: str, matcher: TopicMatcher) -> VideoAnalysis:
+    """Add topics found deterministically in keywords, concepts and the title, and keep the score
+    consistent with them. Free models pick topics inconsistently between runs."""
+    found = [
+        *matcher.from_terms([*analysis.keywords, *(c.term for c in analysis.key_concepts)]),
+        *matcher.from_text(title),
+    ]
+    topics = list(dict.fromkeys([*analysis.matched_topics, *found]))
+    score = analysis.relevance_score
+    score = max(score, MIN_SCORE_WITH_TOPICS) if topics else min(score, MAX_SCORE_WITHOUT_TOPICS)
+    return analysis.model_copy(update={"matched_topics": topics, "relevance_score": score})
+
 
 class Analyzer:
     def __init__(
@@ -141,7 +159,7 @@ class Analyzer:
                     topic_lookup=self._matcher.lookup,
                     topic_guess=tier.source_type is SourceType.TITLE_DESCRIPTION,
                 )
-                analysis = self._reconcile_topics(analysis, title)
+                analysis = reconcile_topics(analysis, title, self._matcher)
                 if truncated and not analysis.limitation:
                     analysis = analysis.model_copy(update={"limitation": "內容過長，只分析了前段。"})
                 errors.pop(model, None)
@@ -159,18 +177,6 @@ class Analyzer:
                 )
             logger.warning("model %s failed: %s", model, errors.get(model))
         raise AnalysisFailed(errors, calls, rate_limited=rate_limited == set(self._models), attempts=attempts)
-
-    def _reconcile_topics(self, analysis: VideoAnalysis, title: str) -> VideoAnalysis:
-        """Add topics found deterministically in keywords, concepts and the title, and keep the
-        score consistent with them. Free models pick topics inconsistently between runs."""
-        found = [
-            *self._matcher.from_terms([*analysis.keywords, *(c.term for c in analysis.key_concepts)]),
-            *self._matcher.from_text(title),
-        ]
-        topics = list(dict.fromkeys([*analysis.matched_topics, *found]))
-        score = analysis.relevance_score
-        score = max(score, MIN_SCORE_WITH_TOPICS) if topics else min(score, MAX_SCORE_WITHOUT_TOPICS)
-        return analysis.model_copy(update={"matched_topics": topics, "relevance_score": score})
 
 
 def _fix_request(error: Exception) -> ChatMessage:
