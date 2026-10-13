@@ -30,6 +30,7 @@ class LLMResponse:
     data: dict[str, Any]
     model: str  # the model that actually answered
     usage: dict[str, Any] = field(default_factory=dict)
+    provider: str | None = None  # the upstream provider OpenRouter routed the request to
 
 
 class LLMError(Exception):
@@ -85,6 +86,7 @@ class OpenRouterClient:
         self._client = client
         self._temperature = temperature
         self._request_timeout = request_timeout
+        self.temperature = temperature
         self._post = retry(
             retry=retry_if_exception_type((_TransientError, httpx.TransportError)),
             stop=stop_after_attempt(attempts),
@@ -114,7 +116,10 @@ class OpenRouterClient:
         if not content:
             raise LLMError("empty reply")
         return LLMResponse(
-            data=parse_json_reply(content), model=str(body.get("model", model)), usage=body.get("usage") or {}
+            data=parse_json_reply(content),
+            model=str(body.get("model", model)),
+            usage=body.get("usage") or {},
+            provider=body.get("provider"),
         )
 
     def _post_once(self, payload: dict[str, Any]) -> dict[str, Any]:
