@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
 from yla.db.models import JobStatus, Subscription, Transcript, User, Video, VideoStatus
@@ -151,7 +151,7 @@ def run_local_worker(
         except Exception as exc:
             session.rollback()
             job.status, job.error = JobStatus.FAILED, f"{type(exc).__name__}: {exc}"[:2000]
-            job.finished_at = now
+            job.finished_at = func.clock_timestamp()
             session.commit()
             raise
 
@@ -170,6 +170,6 @@ def run_local_worker(
             "shorts_skipped": len(enriched.shorts) if enriched else None,
             "metadata_error": enriched.error if enriched else None,
         }
-        job.status, job.finished_at = JobStatus.SUCCEEDED, now
+        job.status, job.finished_at = JobStatus.SUCCEEDED, func.clock_timestamp()
         session.commit()
         return WorkerReport(discovery=discovery, transcripts=transcripts)

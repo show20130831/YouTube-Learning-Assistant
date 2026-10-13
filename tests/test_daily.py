@@ -130,6 +130,9 @@ def test_grades_analyses_and_records_job(session: Session) -> None:
     job = session.scalars(select(JobRun)).one()
     assert job.status is JobStatus.SUCCEEDED
     assert job.stats["analyzed"] == 2 and job.stats["run_id"] == report.run_id
+    # the wall-clock end of the run, not the logical "now" it was started with
+    assert job.finished_at is not None and job.finished_at >= job.started_at
+    assert job.finished_at != NOW
 
 
 def test_limit_prefers_topic_matches_and_defers_the_rest(session: Session) -> None:

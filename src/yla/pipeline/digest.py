@@ -252,13 +252,13 @@ def send_digest(session: Session, user: User, notifier: Notifier, *, now: dateti
             delivered = notifier.push(messages, retry_key=digest.retry_key)
         except NotifyError as exc:
             digest.status, digest.error = DigestStatus.FAILED, str(exc)[:2000]
-            job.status, job.error, job.finished_at = JobStatus.FAILED, digest.error, now
+            job.status, job.error, job.finished_at = JobStatus.FAILED, digest.error, func.clock_timestamp()
             session.commit()
             logger.error("digest push failed: %s", exc)
             return DigestOutcome(status="failed", day=day, messages=messages, error=digest.error)
 
         digest.status, digest.sent_at = DigestStatus.SENT, now
-        job.status, job.finished_at = JobStatus.SUCCEEDED, now
+        job.status, job.finished_at = JobStatus.SUCCEEDED, func.clock_timestamp()
         job.stats = {**job.stats, "delivered": delivered}
         session.commit()
         return DigestOutcome(status="sent", day=day, messages=messages)

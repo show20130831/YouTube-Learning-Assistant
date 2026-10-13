@@ -162,11 +162,15 @@ def _run(
     except Exception as exc:
         session.rollback()
         job.status, job.error = JobStatus.FAILED, f"{type(exc).__name__}: {exc}"[:2000]
-        job.finished_at, job.stats = now, {**base_stats, **report.stats()}
+        job.finished_at, job.stats = func.clock_timestamp(), {**base_stats, **report.stats()}
         session.commit()
         raise
 
-    job.status, job.finished_at, job.stats = JobStatus.SUCCEEDED, now, {**base_stats, **report.stats()}
+    job.status, job.finished_at, job.stats = (
+        JobStatus.SUCCEEDED,
+        func.clock_timestamp(),
+        {**base_stats, **report.stats()},
+    )
     session.commit()
     logger.info("daily pipeline finished: %s", job.stats)
     return report
