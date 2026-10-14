@@ -193,6 +193,12 @@ def _single(run: LoadedRun, dataset: Dataset) -> list[str]:
     ]
 
 
+def _drifted(run: LoadedRun, videos: Sequence[str]) -> set[str]:
+    """Videos answered by another model than the one configured (OpenRouter rerouted them)."""
+    answered = {r.video_id: r.answered_by for r in run.records if r.status == "ok"}
+    return {v for v in videos if answered.get(v) not in (None, run.meta.model)}
+
+
 def _comparison(a: LoadedRun, b: LoadedRun) -> list[str]:
     common = sorted(set(a.score.scores) & set(b.score.scores))
     same_config = (a.meta.model, a.meta.prompt_version) == (b.meta.model, b.meta.prompt_version)
@@ -210,9 +216,11 @@ def _comparison(a: LoadedRun, b: LoadedRun) -> list[str]:
     only_a = sum(1 for x, y in pairs if x is True and y is False)
     only_b = sum(1 for x, y in pairs if x is False and y is True)
 
-    providers_a = {r.video_id: (r.answered_by, r.provider) for r in a.records if r.status == "ok"}
-    providers_b = {r.video_id: (r.answered_by, r.provider) for r in b.records if r.status == "ok"}
-    drifted = [v for v in common if providers_a.get(v) != providers_b.get(v)]
+    drifted = _drifted(a, common) | _drifted(b, common)
+    if a.meta.model == b.meta.model:  # same model: a change of upstream provider is also drift
+        provider_a = {r.video_id: r.provider for r in a.records if r.status == "ok"}
+        provider_b = {r.video_id: r.provider for r in b.records if r.status == "ok"}
+        drifted |= {v for v in common if provider_a.get(v) != provider_b.get(v)}
 
     lines += [
         f"Quality is compared on the {len(common)} videos both runs answered; availability is reported "
@@ -230,8 +238,8 @@ def _comparison(a: LoadedRun, b: LoadedRun) -> list[str]:
     ]
     if drifted:
         lines.append(
-            f"- The answering model or provider differs on {len(drifted)} of {len(common)} videos; "
-            "part of the difference may come from that."
+            f"- On {len(drifted)} of {len(common)} videos a different model answered than configured, "
+            "or the upstream provider changed between runs; part of the difference may come from that."
         )
     if same_config:
         margin = max(abs(f1.low), abs(f1.high))

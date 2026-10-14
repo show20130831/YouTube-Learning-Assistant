@@ -198,6 +198,7 @@ def test_comparison_and_aa_noise(tmp_path: Path) -> None:
     report = build_report(data, runs)
     assert "Paired comparison" in report
     assert "no decision is taken" in report
+    assert "different model answered" not in report  # two models differ by design, not drift
 
     same = build_report(data, [runs[0], runs[0]])
     assert "A/A comparison" in same
@@ -285,3 +286,30 @@ def test_topics_can_live_in_a_separate_local_file(tmp_path: Path, monkeypatch: p
     loaded = load_dataset(tmp_path / "data.yaml")
     assert [t.name for t in loaded.topics] == ["RAG"]
     assert loaded.topics_fingerprint == load_dataset(tmp_path / "data.yaml").topics_fingerprint
+
+
+class ReroutingLLM(FakeLLM):
+    """OpenRouter sometimes answers a model ID with another model (e.g. openrouter/free)."""
+
+    def complete_json(
+        self, messages: list[ChatMessage], *, schema: dict[str, Any], schema_name: str, model: str
+    ) -> LLMResponse:
+        response = super().complete_json(messages, schema=schema, schema_name=schema_name, model=model)
+        return LLMResponse(data=response.data, model="other/model", provider=response.provider)
+
+
+def test_rerouted_answers_are_flagged(tmp_path: Path) -> None:
+    data = dataset(item("v1", "Video one", ["AI Agent"]))
+    cache = Cache(tmp_path / "cache")
+    cache_video(cache, "v1", "Video one")
+    runs = []
+    for run_id, llm in (
+        ("a", FakeLLM({"Video one": [reply(["AI Agent"])]})),
+        ("b", ReroutingLLM({"Video one": [reply([])]})),
+    ):
+        run = create_run(
+            new_meta(run_id=run_id, model=f"{run_id}:free", dataset=data, temperature=0.2), tmp_path
+        )
+        run_dataset(run, data, cache, llm)
+        runs.append(load_run(run, data, {"v1": "Video one"}))
+    assert "On 1 of 1 videos a different model answered" in build_report(data, runs)
