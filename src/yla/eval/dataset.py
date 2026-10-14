@@ -1,12 +1,16 @@
 """The evaluation dataset (``eval/dataset.yaml``) and its local transcript cache.
 
-The dataset file is committed: video IDs, labels with short evidence quotes, and a frozen copy of
-the topic list, so labels stay valid when ``settings.yaml`` changes. Transcripts and model outputs
-are copyrighted or derived from copyrighted text and stay in git-ignored folders.
+The dataset file is committed: video IDs and labels with short evidence quotes. The frozen topic
+list the labels refer to is personal (it comes from ``settings.yaml``), so it can live in a separate,
+git-ignored ``topics_file``; a copy is kept so labels stay valid when ``settings.yaml`` changes, and
+reports show its fingerprint so runs on different topic lists are never compared by mistake.
+Transcripts and model outputs are copyrighted or derived from copyrighted text and stay in
+git-ignored folders.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime
 from enum import StrEnum
@@ -61,6 +65,7 @@ class Dataset(BaseModel):
     version: str
     description: str = ""
     min_description_chars: int = 150
+    topics_file: str | None = None  # where ``topics`` was loaded from, when kept out of the repo
     topics: list[TopicConfig]
     items: list[Item]
 
@@ -84,9 +89,23 @@ class Dataset(BaseModel):
     def labelled(self) -> list[Item]:
         return [i for i in self.items if i.labels is not None]
 
+    @property
+    def topics_fingerprint(self) -> str:
+        canonical = json.dumps([t.model_dump() for t in self.topics], ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(canonical.encode()).hexdigest()[:12]
+
 
 def load_dataset(path: Path = DEFAULT_DATASET_PATH) -> Dataset:
-    return Dataset.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if "topics" not in raw and raw.get("topics_file"):
+        topics_path = Path(raw["topics_file"])
+        if not topics_path.exists():
+            raise FileNotFoundError(
+                f"{topics_path} is missing: copy the topics section of your settings.yaml into it "
+                "(it is git-ignored because the topic list is personal)"
+            )
+        raw["topics"] = yaml.safe_load(topics_path.read_text(encoding="utf-8"))
+    return Dataset.model_validate(raw)
 
 
 class CachedVideo(BaseModel):

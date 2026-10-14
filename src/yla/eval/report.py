@@ -60,6 +60,8 @@ def _conditions(dataset: Dataset, runs: Sequence[LoadedRun]) -> list[str]:
         f"({', '.join(f'{k} {v}' for k, v in sorted(splits.items()))}); labels "
         f"{status.get(LabelStatus.CONFIRMED, 0)} confirmed by a person, "
         f"{status.get(LabelStatus.DRAFT, 0)} draft.",
+        f"- Topic list: {len(dataset.topics)} topics, fingerprint `{dataset.topics_fingerprint}`"
+        f"{f' (kept locally in `{dataset.topics_file}`)' if dataset.topics_file else ''}.",
         f"- Rules replayed: `{RULES_VERSION}` (scores are recomputed from the raw outputs).",
         "",
         "| Run | Model | Prompt | Rules at run time | Temperature | Answered by | Providers |",

@@ -267,3 +267,21 @@ def test_fetch_respects_the_daily_caption_limit_and_stops_when_blocked(tmp_path:
         sleep=lambda _: None,
     )
     assert again.blocked and cache.get("v3") is None
+
+
+def test_topics_can_live_in_a_separate_local_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from yla.eval.dataset import load_dataset
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data.yaml").write_text(
+        "version: v1\ntopics_file: topics.yaml\nitems:\n"
+        "- {video_id: v1, split: test, channel: c, title: t, labels: {topics: [RAG], evidence: {RAG: q}}}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(FileNotFoundError, match="git-ignored"):
+        load_dataset(tmp_path / "data.yaml")
+
+    (tmp_path / "topics.yaml").write_text("- {name: RAG, aliases: [Retrieval]}\n", encoding="utf-8")
+    loaded = load_dataset(tmp_path / "data.yaml")
+    assert [t.name for t in loaded.topics] == ["RAG"]
+    assert loaded.topics_fingerprint == load_dataset(tmp_path / "data.yaml").topics_fingerprint

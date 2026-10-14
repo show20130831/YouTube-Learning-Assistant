@@ -13,3 +13,4 @@ logs/
 # evaluation: transcripts (copyrighted) and model outputs stay local
 eval/cache/
 eval/runs/
+eval/topics.yaml
