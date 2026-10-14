@@ -197,12 +197,15 @@ def test_comparison_and_aa_noise(tmp_path: Path) -> None:
         runs.append(load_run(run, data, titles))
     report = build_report(data, runs)
     assert "Paired comparison" in report
+    assert "identical on 6 of 6 paired videos (compared by text hash)" in report
+    assert "Final topics differ on 3 of 6 videos" in report
     assert "no decision is taken" in report
     assert "different model answered" not in report  # two models differ by design, not drift
 
     same = build_report(data, [runs[0], runs[0]])
     assert "A/A comparison" in same
-    assert "differs by up to 0.000" in same
+    assert "A/A difference reaches 0.000" in same
+    assert "Final topics differ on 0 of 6 videos" in same
 
 
 def test_residual_violations_detect_what_the_rules_should_remove() -> None:

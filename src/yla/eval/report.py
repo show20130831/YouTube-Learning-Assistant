@@ -96,7 +96,8 @@ def _availability(run: LoadedRun) -> list[str]:
         f"| Timed out on the first attempt | {a.first_round_timeouts}/{n} (95% CI {low:.0%}-{high:.0%}) |",
         f"| Still unanswered: timeout / rate limited | {a.timeouts} / {a.rate_limited} |",
         f"| Timed out in two rounds | {', '.join(a.persistent_timeouts) or 'none'} |",
-        f"| Latency p50 / p95 (answered) | {p50 or 0:.0f} s / {p95 or 0:.0f} s |",
+        f"| Latency p50 / p95 (answered) | {p50 or 0:.0f} s / {p95 or 0:.0f} s"
+        f"{' (p95 is the slowest reply at this sample size)' if len(a.latencies) < 20 else ''} |",
         f"| Requests per video | {a.calls / n:.2f} |",
         "",
     ]
@@ -124,6 +125,7 @@ def _topic_table(scores: Sequence[VideoScore]) -> list[str]:
 def _per_topic(scores: Sequence[VideoScore], topics: Sequence[str]) -> list[str]:
     lines = ["| Topic (final) | Labelled videos | TP | FP | FN |", "|---|---|---|---|---|"]
     macro: list[float] = []
+    included: list[str] = []
     for topic in topics:
         tp = sum(topic in s.topics["final"] and topic in s.expected for s in scores)
         fp = sum(topic in s.topics["final"] and topic not in s.expected for s in scores)
@@ -131,12 +133,14 @@ def _per_topic(scores: Sequence[VideoScore], topics: Sequence[str]) -> list[str]
         positives = tp + fn
         if positives >= MACRO_MIN_POSITIVES:
             macro.append(micro_prf([Counts(tp, fp, fn)]).f1 or 0.0)
+            included.append(topic)
         lines.append(f"| {topic} | {positives} | {tp} | {fp} | {fn} |")
     lines.append("")
     if macro:
         lines.append(
-            f"Macro-F1 over the {len(macro)} topic(s) with at least {MACRO_MIN_POSITIVES} labelled videos: "
-            f"{sum(macro) / len(macro):.2f} (descriptive only)."
+            f"Macro-F1 over only the topics with at least {MACRO_MIN_POSITIVES} labelled videos "
+            f"({', '.join(included)}): {sum(macro) / len(macro):.2f}. Topics with fewer are left out, "
+            "so this is not an average over all topics (descriptive only)."
         )
     else:
         lines.append(f"No topic has {MACRO_MIN_POSITIVES}+ labelled videos yet, so macro-F1 is not reported.")
@@ -199,6 +203,16 @@ def _drifted(run: LoadedRun, videos: Sequence[str]) -> set[str]:
     return {v for v in videos if answered.get(v) not in (None, run.meta.model)}
 
 
+def _same_inputs(a: LoadedRun, b: LoadedRun, videos: Sequence[str]) -> tuple[int, str]:
+    """How many paired videos got the same input text: by hash when both runs recorded it."""
+    ra = {r.video_id: r for r in a.records if r.status == "ok"}
+    rb = {r.video_id: r for r in b.records if r.status == "ok"}
+    if all(ra[v].input_sha256 and rb[v].input_sha256 for v in videos):
+        return sum(ra[v].input_sha256 == rb[v].input_sha256 for v in videos), "text hash"
+    basis = "text length, as these runs predate input hashes"
+    return sum(ra[v].input_chars == rb[v].input_chars for v in videos), basis
+
+
 def _comparison(a: LoadedRun, b: LoadedRun) -> list[str]:
     common = sorted(set(a.score.scores) & set(b.score.scores))
     same_config = (a.meta.model, a.meta.prompt_version) == (b.meta.model, b.meta.prompt_version)
@@ -211,6 +225,10 @@ def _comparison(a: LoadedRun, b: LoadedRun) -> list[str]:
     f1 = paired_bootstrap(ca, cb, f1_difference)
     precision = paired_bootstrap(ca, cb, precision_difference)
     p = paired_permutation_p(ca, cb, f1_difference)
+
+    prf_a, prf_b = micro_prf(ca), micro_prf(cb)
+    changed = sum(a.score.scores[v].topics["final"] != b.score.scores[v].topics["final"] for v in common)
+    same_input, basis = _same_inputs(a, b, common)
 
     pairs = [(a.score.scores[v].first_try_valid, b.score.scores[v].first_try_valid) for v in common]
     only_a = sum(1 for x, y in pairs if x is True and y is False)
@@ -226,13 +244,23 @@ def _comparison(a: LoadedRun, b: LoadedRun) -> list[str]:
         f"Quality is compared on the {len(common)} videos both runs answered; availability is reported "
         "per run above, so a run cannot look better by failing on hard videos.",
         "",
+        f"- Inputs: identical on {same_input} of {len(common)} paired videos (compared by {basis}); "
+        "both runs are scored against the same labels.",
+        f"- Final topics differ on {changed} of {len(common)} videos.",
+        "",
+        f"| On the {len(common)} paired videos | Precision | Recall | Micro-F1 |",
+        "|---|---|---|---|",
+        f"| A | {_pct(prf_a.precision)} | {_pct(prf_a.recall)} | {_pct(prf_a.f1)} |",
+        f"| B | {_pct(prf_b.precision)} | {_pct(prf_b.recall)} | {_pct(prf_b.f1)} |",
+        "",
         "| Measure (B - A, final topics) | Difference | 95% bootstrap CI |",
         "|---|---|---|",
         f"| Micro-F1 | {_signed(f1.estimate)} | {_signed(f1.low)} to {_signed(f1.high)} |",
         f"| Precision | {_signed(precision.estimate)} | "
         f"{_signed(precision.low)} to {_signed(precision.high)} |",
         "",
-        f"- Paired permutation test on the F1 difference: p = {p:.3f}.",
+        f"- Paired permutation test on the F1 difference: p = {p:.3f} "
+        "(a large p means no difference was detected, not that the runs are equivalent).",
         f"- First reply valid: only A {only_a}, only B {only_b} "
         f"(exact McNemar p = {mcnemar_exact_p(only_a, only_b):.3f}).",
     ]
@@ -245,9 +273,9 @@ def _comparison(a: LoadedRun, b: LoadedRun) -> list[str]:
         margin = max(abs(f1.low), abs(f1.high))
         lines += [
             "",
-            f"Run-to-run noise: the same configuration differs by up to {margin:.3f} in micro-F1 "
-            "(95% CI bound). "
-            "Comparisons between configurations use this as the tolerated margin.",
+            f"The 95% CI of this A/A difference reaches {margin:.3f} in micro-F1. With this few videos it "
+            "is a rough, provisional reference, used as the tolerated margin when comparing "
+            "configurations; it will be re-estimated as runs and videos accumulate.",
         ]
     else:
         lines += [

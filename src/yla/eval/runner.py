@@ -14,6 +14,7 @@ and inflate the trending topics.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Callable
@@ -58,6 +59,7 @@ class Record(BaseModel):
     source_type: str | None = None
     language: str | None = None
     input_chars: int | None = None
+    input_sha256: str | None = None  # of the text sent, so paired runs can prove identical inputs
     raw: dict[str, Any] | None = None
     error: str | None = None
 
@@ -196,6 +198,7 @@ def run_dataset(
             "source_type": tier.source_type.value,
             "language": tier.language,
             "input_chars": len(tier.text),
+            "input_sha256": hashlib.sha256(tier.text.encode()).hexdigest()[:16],
         }
         summary.attempted += 1
         if not tier.available:
