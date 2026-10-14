@@ -1,7 +1,9 @@
-version: 2026-10-13.mvp
+version: 2026-10-14.mvp
 description: 'MVP dataset. dev: the 9 videos that had transcripts when prompts were tuned (seen, so contaminated;
-  development only). test: new videos picked per channel with random.Random(20261013) among 3-120 minute videos
-  without transcripts, 5 per day (caption request limit).'
+  development only). test, 2026-10-13: one video per channel drawn with random.Random(20261013) among 3-120 minute
+  videos without transcripts. test, 2026-10-14 (appended; earlier labels unchanged): published in 2026 only, drawn
+  with random.Random(20261014) within a target length bucket per channel (short <=15 min, medium <=60, long <=120)
+  chosen to fill the buckets the test set lacked. At most 5 caption requests per day.'
 min_description_chars: 150
 topics_file: eval/topics.yaml
 items:
@@ -208,3 +210,73 @@ items:
     status: confirmed
     notes: 'AI Automation is one chapter (scheduled Codex tasks) among many features. LLM not labeled: models only
       as the engine of Codex.'
+- video_id: yeWi6YdDOMM
+  split: test
+  channel: Nick Saraev
+  title: Fable 5.1 Just Dropped. It's Not Even Close.
+  published_at: '2026-09-01T18:21:44+00:00'
+  duration_seconds: 623
+  labels:
+    topics:
+    - LLM
+    evidence:
+      LLM: Likewise, agentic coding, it scores a new top of 55.8% uh compared to Fable 5's 42 and 52.3, as well
+        as GPT-5.6-Sol's 37.3%.
+    status: confirmed
+    notes: 'AI Agent and AI Automation not labeled: agentic and business-automation benchmarks are discussed as
+      model capabilities, not how to build agents or automations. Confirm.'
+- video_id: yqm1untg9xY
+  split: test
+  channel: AssemblyAI
+  title: Build Smarter Voice Agents
+  published_at: '2026-07-28T16:22:55+00:00'
+  duration_seconds: 2774
+  labels:
+    topics:
+    - AI Agent
+    evidence:
+      AI Agent: How do you actually build your voice agents today?
+    status: confirmed
+    notes: 'LLM not labeled: the LLM is one layer of the voice pipeline, not discussed in itself.'
+- video_id: 7ZOjMnbxJYE
+  split: test
+  channel: DeepLearningAI
+  title: '1st Place Winner: Coding Agent Calls Developer to Resolve Code Block'
+  published_at: '2026-08-05T14:41:22+00:00'
+  duration_seconds: 377
+  labels:
+    topics:
+    - AI Agent
+    evidence:
+      AI Agent: This is an AI assistant calling on behalf of your coding agent and I'm hoping I've reached the developer.
+    status: confirmed
+- video_id: s06mSAGN4gM
+  split: test
+  channel: Hung-yi Lee
+  title: AI 要跨越盧比孔河了嗎？自我成長的 AI 離我們多遠 (上集)
+  published_at: '2026-05-10T20:50:24+00:00'
+  duration_seconds: 3825
+  labels:
+    topics:
+    - Machine Learning
+    - LLM
+    evidence:
+      Machine Learning: 我們先來看看 在一般的機器學習裡面 所謂的 AI 學習 到底是怎麼一回事
+      LLM: 那實際上怎麼訓練一個 LLM 讓它能夠產生 proxy reward
+    status: confirmed
+    notes: 'AI Agent not labeled: agents (model + harness) are only previewed at the end for the next lecture.'
+- video_id: v3fDWFRzS7E
+  split: test
+  channel: 馬克的技術工作坊
+  title: 如何使用第三方模型驱动 Codex（无需 OpenAI 账号）
+  published_at: '2026-06-28T13:19:16+00:00'
+  duration_seconds: 617
+  labels:
+    topics:
+    - LLM
+    evidence:
+      LLM: 如何使用國產模型來驅動 Codex 全程不需要使用 OpenAI 的賬號
+    status: confirmed
+    notes: 'Uncertain: a setup tutorial for running Codex on third-party models (DeepSeek, GLM, Kimi). LLM labeled
+      because choosing and connecting the model is the subject; AI Agent not labeled because agent behaviour is
+      not discussed. Confirm.'
