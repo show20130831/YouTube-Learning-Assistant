@@ -1,0 +1,210 @@
+version: 2026-10-13.mvp
+description: 'MVP dataset. dev: the 9 videos that had transcripts when prompts were tuned (seen, so contaminated;
+  development only). test: new videos picked per channel with random.Random(20261013) among 3-120 minute videos
+  without transcripts, 5 per day (caption request limit).'
+min_description_chars: 150
+topics_file: eval/topics.yaml
+items:
+- video_id: S9DEYEyFrjI
+  split: dev
+  channel: Aced (formerly Exponent)
+  title: Goldman Sachs Investment Banking Superday Mock Interview
+  published_at: '2026-09-17T18:35:28+00:00'
+  duration_seconds: 1902
+  labels:
+    topics: []
+    evidence: {}
+    status: confirmed
+    notes: 'No topic: an investment banking mock interview.'
+- video_id: S3l7U7gOsyY
+  split: dev
+  channel: LangChain
+  title: 'Building Engine v2: How LangChain approaches agent improvement'
+  published_at: '2026-10-07T12:54:08+00:00'
+  duration_seconds: 1219
+  labels:
+    topics:
+    - AI Agent
+    - LangChain
+    evidence:
+      AI Agent: I work on our product engine, which is our agent for agent engineering.
+      LangChain: walk you through the process that we have at LangChain of developing and improving our agents through
+        engine
+    status: confirmed
+- video_id: lNum1UFDYn0
+  split: dev
+  channel: Nick Saraev
+  title: AI Harnesses In 24 Minutes (For Normal People)
+  published_at: '2026-10-07T21:04:30+00:00'
+  duration_seconds: 1478
+  labels:
+    topics:
+    - AI Agent
+    evidence:
+      AI Agent: understanding context will help you build and design far better AI agents.
+    status: confirmed
+    notes: 'LLM not labeled: the video is about harnesses around models, not the models. Confirm.'
+- video_id: DMQEPzSxGVk
+  split: dev
+  channel: Nick Saraev
+  title: I Spent $700 Testing Haiku 5.5 vs Sonnet 5.5 vs Opus 5.5
+  published_at: '2026-10-08T20:44:31+00:00'
+  duration_seconds: 1968
+  labels:
+    topics:
+    - LLM
+    evidence:
+      LLM: I just spent over $700 split testing Claude Haiku 5.5 across other Claude models like Sonnet and Opus
+        5.5.
+    status: confirmed
+    notes: 'AI Agent not labeled: sub-agent delegation is a short cost remark.'
+- video_id: vPs3DLyfNew
+  split: dev
+  channel: AssemblyAI
+  title: 'Workshop: Async, Sync, or Realtime: Which model do I choose?'
+  published_at: '2026-10-08T20:58:07+00:00'
+  duration_seconds: 1808
+  labels:
+    topics: []
+    evidence: {}
+    status: confirmed
+    notes: 'No topic: choosing speech-to-text APIs; voice agents are only a use case.'
+- video_id: XcsspzECTKA
+  split: dev
+  channel: LangChain
+  title: Managed Deep Agents | Deploying mission critical agents to production
+  published_at: '2026-10-09T14:41:48+00:00'
+  duration_seconds: 948
+  labels:
+    topics:
+    - AI Agent
+    - LangChain
+    evidence:
+      AI Agent: the core idea of an agent is it's a model using tools in order to complete a task
+      LangChain: Deep Agents is a customizable harness that we can build for any domain-specific task.
+    status: confirmed
+    notes: 'LangGraph not labeled: only named as the runtime Deep Agents is built on.'
+- video_id: LD0NxqDcDiY
+  split: dev
+  channel: Nick Saraev
+  title: HOLY SH*T, I Just Made An ATTACK ON TITAN Game w/ Claude
+  published_at: '2026-10-09T15:02:34+00:00'
+  duration_seconds: 1407
+  labels:
+    topics:
+    - AI Agent
+    evidence:
+      AI Agent: The next thing you're going to have to do is you're going to have to open your AI agent. So, I'm
+        using clawed code running Opus v5.5 inside of a terminal environment
+    status: confirmed
+    notes: 'LLM not labeled: the model comparison is only the motivation; the video builds a game with a coding
+      agent. Confirm.'
+- video_id: oVKGKdIAgtg
+  split: dev
+  channel: LangChain
+  title: Three Questions Every Agent Engineer Should Be Able To Answer
+  published_at: '2026-10-09T17:16:00+00:00'
+  duration_seconds: 848
+  labels:
+    topics:
+    - AI Agent
+    evidence:
+      AI Agent: I think that there are three main questions that any person who's building an agent needs to have
+        a very solid grasp of.
+    status: confirmed
+    notes: 'LangChain not labeled: the speaker is from LangChain, but no LangChain product is discussed. Machine
+      Learning not labeled: post-training is mentioned, not taught.'
+- video_id: dAzs_rU6080
+  split: dev
+  channel: Nick Saraev
+  title: I Tested The Viral Github Repo To Reverse Engineer Anything
+  published_at: '2026-10-10T21:33:04+00:00'
+  duration_seconds: 647
+  labels:
+    topics:
+    - AI Agent
+    evidence:
+      AI Agent: Your AI agent then sends a request to the REAMCP.
+    status: confirmed
+- video_id: t3YJ5hKiMQ0
+  channel: AndrejKarpathy
+  title: 'Building makemore Part 5: Building a WaveNet'
+  published_at: '2022-11-21T00:32:48+00:00'
+  duration_seconds: 3382
+  split: test
+  labels:
+    topics:
+    - Machine Learning
+    evidence:
+      Machine Learning: we would like to make a deeper model that progressively fuses this information to make its
+        guess about the next character in a sequence
+    status: confirmed
+    notes: 'LLM not labeled: a small character-level language model built from scratch, not a large language model.
+      Confirm.'
+- video_id: L3nlGfSyHV0
+  channel: statquest
+  title: False Discovery Rates, FDR, clearly explained
+  published_at: '2026-06-08T15:01:35+00:00'
+  duration_seconds: 1107
+  split: test
+  labels:
+    topics:
+    - Bioinformatics
+    evidence:
+      Bioinformatics: Let's start with an example of measuring gene expression using RNA sequencing.
+    status: confirmed
+    notes: 'Uncertain: FDR is a statistics method, but the whole video is framed and demonstrated on RNA-seq gene
+      expression. Machine Learning not labeled (multiple-testing correction is not ML).'
+- video_id: pb-AAvvQZ-U
+  channel: LangChain
+  title: How to go from your agent's traces to a fine-tuned model in one workflow
+  published_at: '2026-09-24T14:09:42+00:00'
+  duration_seconds: 541
+  split: test
+  labels:
+    topics:
+    - AI Agent
+    - LangChain
+    - LLM
+    - Machine Learning
+    evidence:
+      AI Agent: For agents, that might mean choosing the right tools, following a particular workflow, recovering
+        from errors, or knowing when to ask for clarification.
+      LangChain: today we're launching LangSmith fine-tuning in public beta with SmithTune, a CLI to allow you to
+        post-train models from your LangSmith traces in one workflow.
+      LLM: You might use SFT to specialise a large model for your application, distill a frontier model's behaviour
+        into a smaller model
+      Machine Learning: Supervised fine-tuning, or SFT, teaches a model desired behavior through golden examples.
+    status: confirmed
+    notes: 'LLM and Machine Learning both labeled: the video is about fine-tuning language models, with general
+      training steps (validation loss, checkpoints).'
+- video_id: fDQaadKysSA
+  channel: Hung-yi Lee
+  title: 加快語言模型生成速度 (2/2)：KV Cache
+  published_at: '2026-03-23T04:16:04+00:00'
+  duration_seconds: 2314
+  split: test
+  labels:
+    topics:
+    - LLM
+    evidence:
+      LLM: 在講 KV Cache 之前 我們來再回顧一下 語言模型的整個生成的過程
+    status: confirmed
+    notes: 'AI Agent not labeled: agents appear as one example of prompt caching savings. Machine Learning not labeled:
+      LLM internals are labeled LLM only.'
+- video_id: HQGUed-e2wM
+  channel: 馬克的技術工作坊
+  title: Codex 从 0 到 1 全攻略 - Annotate / Fork / Archive / Plan / Plugin / Skill / Automation / Mobile ......
+  published_at: '2026-06-08T00:40:15+00:00'
+  duration_seconds: 3518
+  split: test
+  labels:
+    topics:
+    - AI Agent
+    - AI Automation
+    evidence:
+      AI Agent: 他引入了一個專門負責安全審查的agent 當Codex準備執行操作的時候 這個agent會首先替你把關
+      AI Automation: 這種場景就很適合起一個定時任務來處理 codex也提供了這樣的功能
+    status: confirmed
+    notes: 'AI Automation is one chapter (scheduled Codex tasks) among many features. LLM not labeled: models only
+      as the engine of Codex.'
