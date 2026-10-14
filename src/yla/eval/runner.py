@@ -36,7 +36,7 @@ class RunMeta(BaseModel):
     model: str
     prompt_version: str
     rules_version: str  # rules in force when the run was made; scoring may replay newer ones
-    dataset_version: str
+    dataset_version: str  # when the run started; it may continue on later versions
     temperature: float | None
     top_p: float | None = None  # not sent: the provider default applies
     created_at: datetime
@@ -124,12 +124,10 @@ def create_run(meta: RunMeta, runs_dir: Path = DEFAULT_RUNS_DIR) -> Run:
     run = Run(runs_dir / meta.run_id)
     if run.meta_path.exists():
         existing = run.meta()
-        if (existing.model, existing.prompt_version, existing.dataset_version) != (
-            meta.model,
-            meta.prompt_version,
-            meta.dataset_version,
-        ):
-            raise ValueError(f"run {meta.run_id} exists with a different configuration")
+        # A run may continue on a newer dataset version: versions only add videos, and labels of
+        # videos already used are frozen. The model and prompt must not change within a run.
+        if (existing.model, existing.prompt_version) != (meta.model, meta.prompt_version):
+            raise ValueError(f"run {meta.run_id} exists with a different model or prompt")
         return run
     run.root.mkdir(parents=True, exist_ok=True)
     run.meta_path.write_text(meta.model_dump_json(indent=1), encoding="utf-8")

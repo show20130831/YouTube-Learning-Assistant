@@ -64,15 +64,17 @@ def _conditions(dataset: Dataset, runs: Sequence[LoadedRun]) -> list[str]:
         f"{f' (kept locally in `{dataset.topics_file}`)' if dataset.topics_file else ''}.",
         f"- Rules replayed: `{RULES_VERSION}` (scores are recomputed from the raw outputs).",
         "",
-        "| Run | Model | Prompt | Rules at run time | Temperature | Answered by | Providers |",
-        "|---|---|---|---|---|---|---|",
+        "| Run | Model | Prompt | Rules at run time | Dataset at start | Temperature | Answered by "
+        "| Providers |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for run in runs:
         answered = sorted({r.answered_by for r in run.records if r.answered_by})
         providers = sorted({r.provider for r in run.records if r.provider})
         m = run.meta
         lines.append(
-            f"| `{m.run_id}` | `{m.model}` | `{m.prompt_version}` | `{m.rules_version}` | {m.temperature} | "
+            f"| `{m.run_id}` | `{m.model}` | `{m.prompt_version}` | `{m.rules_version}` | "
+            f"`{m.dataset_version}` | {m.temperature} | "
             f"{', '.join(answered) or '-'} | {', '.join(providers) or 'not reported'} |"
         )
     return [*lines, ""]
