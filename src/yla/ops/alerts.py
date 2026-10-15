@@ -39,6 +39,7 @@ CAPTION_ERROR_RUNS = 2
 QUALITY_WINDOW = timedelta(days=7)
 QUALITY_MIN_ANALYSES = 4
 RULE_CHECK_WINDOW = timedelta(days=1)
+DRIFT_CHECK_WINDOW = timedelta(days=8)  # the check runs weekly; its warning stays until the next one
 # "Topic outside the list" is guaranteed when an analysis is made, but the list can change since
 # (a topic removed from settings.yaml), so it is shown by ``yla metrics`` but not alerted on.
 ALERT_ON = GUARANTEED_BY_RULES - {"topic outside the list"}
@@ -52,6 +53,7 @@ def trend_warnings(session: Session, user: User, *, now: datetime) -> list[str]:
         *_mostly_topic_guesses(session, user, now),
         *_rerouted_models(session),
         *_rule_violations(session, user, now),
+        *_model_drift(session, now),
     ]
 
 
@@ -154,4 +156,26 @@ def _rule_violations(session: Session, user: User, now: datetime) -> list[str]:
     return [
         f"⚠️ {len(violations)} 部摘要仍有程式應修正的格式問題（{violations[0][1][0]} 等），"
         "規則可能失效或模型輸出格式改變，請執行 yla metrics 檢查。"
+    ]
+
+
+def _model_drift(session: Session, now: datetime) -> list[str]:
+    """The weekly drift check (``yla eval drift``) found the primary model changed."""
+    stats = session.scalars(
+        select(JobRun.stats)
+        .where(
+            JobRun.job_name == "eval_drift",
+            JobRun.status == JobStatus.SUCCEEDED,
+            JobRun.started_at >= now - DRIFT_CHECK_WINDOW,
+        )
+        .order_by(JobRun.id.desc())
+        .limit(1)
+    ).first()
+    if not stats or not stats.get("drifted"):
+        return []
+    return [
+        "⚠️ 每週漂移檢查：主模型的表現和基準不同（"
+        + "；".join(stats.get("reasons") or [])
+        + "），模型可能已在同一名稱下更換，請查看 eval/runs/"
+        + f"{stats.get('run_id')}/drift.md。"
     ]

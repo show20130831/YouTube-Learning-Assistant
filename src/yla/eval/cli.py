@@ -12,6 +12,7 @@ import httpx
 import typer
 
 from yla.analysis.topics import TopicMatcher
+from yla.config import DEFAULT_SETTINGS_PATH
 from yla.eval.blind import (
     BlindSession,
     ConceptState,
@@ -36,9 +37,11 @@ from yla.eval.dataset import (
     Labels,
     load_dataset,
 )
+from yla.eval.drift import DEFAULT_DRIFT_CONFIG, compare_for_drift, load_drift_config, render_drift
 from yla.eval.fetch import VideoInfo, fill_cache
 from yla.eval.report import build_report, load_run
 from yla.eval.runner import Record, create_run, new_meta, open_run, run_dataset
+from yla.llm.prompts import PROMPT_VERSION
 
 eval_app = typer.Typer(help="Evaluate models, prompts and rules on a labelled dataset.", no_args_is_help=True)
 
@@ -306,3 +309,97 @@ def blind_command(
         save_session(runs_dir, session)
         typer.echo("Saved.")
     typer.echo("Blind review complete.")
+
+
+@eval_app.command("drift")
+def drift_command(
+    config_path: Annotated[
+        Path, typer.Option("--config", help="Drift check settings")
+    ] = DEFAULT_DRIFT_CONFIG,
+    settings_path: Annotated[Path, typer.Option("--settings", help="Settings YAML")] = DEFAULT_SETTINGS_PATH,
+    dataset_path: DatasetPath = DEFAULT_DATASET_PATH,
+    cache_dir: CacheDir = DEFAULT_CACHE_DIR,
+    runs_dir: RunsDir = DEFAULT_RUNS_DIR,
+) -> None:
+    """Re-run the primary model on the reference run's videos and check it has not drifted.
+
+    Records the result as an ``eval_drift`` job run, so the next digest warns on drift. Nothing
+    else is written to the database: evaluation outputs stay in local files.
+    """
+    from sqlalchemy import func
+
+    from yla.config import Secrets, load_settings
+    from yla.db.models import JobRun, JobStatus
+    from yla.db.session import make_engine, session_scope
+    from yla.llm.client import OpenRouterClient
+    from yla.ops.jobs import start_job
+
+    secrets = Secrets()
+    if secrets.openrouter_api_key is None or secrets.database_url is None:
+        raise _fail("OPENROUTER_API_KEY and DATABASE_URL are needed")
+    config = load_drift_config(config_path)
+    primary = load_settings(settings_path).llm.primary_model
+    dataset = load_dataset(dataset_path)
+    titles = {v.video_id: v.title for v in Cache(cache_dir).all()}
+    try:
+        reference = load_run(open_run(config.reference_run, runs_dir), dataset, titles)
+    except FileNotFoundError as exc:
+        raise _fail(str(exc)) from exc
+    engine = make_engine(secrets.database_url.get_secret_value())
+    with session_scope(engine) as session:
+        job_id = start_job(
+            session, "eval_drift", now=datetime.now(UTC), stats={"reference": config.reference_run}
+        ).id
+
+    def finish(status: JobStatus, stats: dict[str, object], error: str | None = None) -> None:
+        with session_scope(engine) as session:
+            job = session.get(JobRun, job_id)
+            assert job is not None
+            job.status, job.error, job.finished_at = status, error, func.clock_timestamp()
+            job.stats = {**job.stats, **stats}
+
+    if reference.meta.model != primary or reference.meta.prompt_version != PROMPT_VERSION:
+        message = (
+            f"reference {config.reference_run} used {reference.meta.model} / prompt "
+            f"{reference.meta.prompt_version}; production uses {primary} / {PROMPT_VERSION}: "
+            "set a new reference"
+        )
+        finish(JobStatus.SUCCEEDED, {"completed": False, "skipped": message})
+        typer.secho(f"Skipped: {message}", fg=typer.colors.YELLOW)
+        return
+
+    run_id = f"drift-{datetime.now(TAIPEI):%Y%m%d}-{_default_run_id(primary).split('-', 1)[1]}"
+    try:
+        with httpx.Client(timeout=httpx.Timeout(30.0, read=200.0)) as http:
+            client = OpenRouterClient(secrets.openrouter_api_key.get_secret_value(), http)
+            meta = new_meta(run_id=run_id, model=primary, dataset=dataset, temperature=client.temperature)
+            run = create_run(meta, runs_dir)
+            summary = run_dataset(run, dataset, Cache(cache_dir), client, only=set(reference.score.scores))
+        current = load_run(run, dataset, titles)
+        result = compare_for_drift(reference, current, margin=config.margin)
+    except Exception as exc:
+        finish(JobStatus.FAILED, {"run_id": run_id}, f"{type(exc).__name__}: {exc}"[:2000])
+        raise
+    completed = not summary.stopped_on_rate_limit
+    report = render_drift(result, config)
+    (run.root / "drift.md").write_text("\n".join(report) + "\n", encoding="utf-8")
+    finish(
+        JobStatus.SUCCEEDED,
+        {
+            "run_id": run_id,
+            "completed": completed,
+            "compared": result.compared,
+            "drifted": result.drifted and completed,
+            "reasons": result.reasons,
+            "notes": result.notes,
+            "delta_f1": result.f1.estimate if result.f1 else None,
+            "delta_precision": result.precision.estimate if result.precision else None,
+            "margin": config.margin,
+        },
+    )
+    for line in report:
+        typer.echo(line)
+    if not completed:
+        typer.secho(
+            "Stopped on a rate limit: this check is incomplete and raises no alert.", fg=typer.colors.YELLOW
+        )

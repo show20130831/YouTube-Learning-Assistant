@@ -177,6 +177,7 @@ def run_dataset(
     client: LLMClient,
     *,
     limit: int | None = None,
+    only: set[str] | None = None,  # restrict to these videos (e.g. those a reference run answered)
     clock: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     on_record: Callable[[Record], None] | None = None,
@@ -192,6 +193,8 @@ def run_dataset(
     title_only = meta.input == "title"
     for item in dataset.labelled:
         if title_only and item.video_id not in dataset.title_only_subset:
+            continue
+        if only is not None and item.video_id not in only:
             continue
         done = previous.get(item.video_id, [])
         if any(r.status in ("ok", "no_text") for r in done):

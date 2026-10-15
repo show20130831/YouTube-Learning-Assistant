@@ -9,6 +9,7 @@ How the assistant is monitored, and what to do when something goes wrong.
 | 10:30 | `local_worker` | Your computer (Windows Task Scheduler) | Finds new videos, skips Shorts, fetches captions |
 | 11:00 | `daily_pipeline` | Modal | Finds new videos again (backup), summarizes with an LLM |
 | 12:00 | `send_digest` | Modal | Sends the LINE digest and pings the heartbeat |
+| Sunday 14:00 | `eval_drift` | Your computer (Windows Task Scheduler) | Re-runs the primary model on the evaluation videos and compares it with a reference run |
 
 Each run is recorded in the `job_runs` table. Log lines carry `run=<id>` so one run can be followed end to end.
 
@@ -36,6 +37,7 @@ Persistent problems reported in the digest:
 | Mostly topic guesses | More than half of the last 7 days' summaries (at least 4) had no captions |
 | Answered by another model | In the last pipeline run, OpenRouter answered a model ID with a different model |
 | Rule problems left in outputs | A summary from the last day still has a problem the post-processing rules remove (half-width gloss, wrapping quotes, too many key points, and so on) |
+| Model drift | The weekly drift check found a different model answering, or final-topic F1 or precision moved by more than the A/A margin |
 
 Cloud feed failures alone are not reported: the cloud read is only a backup for the worker and fails routinely.
 
@@ -49,6 +51,7 @@ shows them as trends instead.
 |---|---|
 | `uv run yla health` | Checks every service, the configuration and usage. Never calls the LLM. Exit code 1 on any failure |
 | `uv run yla status --days 3` | Recent runs of each job with their key numbers and errors |
+| `uv run yla eval drift` | The weekly drift check, run by hand; the result is in `eval/runs/drift-*/drift.md` |
 | `uv run yla metrics --days 14` | LLM trends: results, latency and tokens per model, fallbacks, star mix, topics per video, rule fixes and problems per day |
 | `uv run yla digest --dry-run` | Shows today's digest without sending it |
 | `uv run modal app logs youtube-learning-assistant` | Cloud logs |
@@ -128,6 +131,18 @@ Run `uv run yla health` once a week, and after any change to settings, keys or c
 - **Fix:** add the case to the rule tests, fix the rule, bump `RULES_VERSION`, and replay the evaluation runs
   (`yla eval report`) to check nothing else changed.
 
+### "每週漂移檢查：主模型的表現和基準不同" (model drift)
+
+- **Cause:** the model behind the configured ID changed (a new version, a reroute), so the same inputs now get
+  different topics. The margin (`eval/drift.yaml`) is the largest difference identical runs produced, so this is
+  more than run-to-run noise has shown.
+- **Check:** read `eval/runs/<run>/drift.md`, then compare in full with
+  `uv run yla eval report <reference run> <drift run> --no-blind`.
+- **Decide:** if quality dropped, evaluate another model (see "Primary model unreliable"); if it improved or
+  only changed, run the blind review before trusting it.
+- **After any change of primary model or prompt:** make a new full run, set it as `reference_run` in
+  `eval/drift.yaml`; until then the check skips itself and records why.
+
 ### Cloud settings differ from settings.yaml
 
 - **Cause:** `config/settings.yaml` changed without redeploying, so the cloud still uses the old channels, topics or models.
@@ -155,5 +170,6 @@ Run `uv run yla health` once a week, and after any change to settings, keys or c
 | Apply database migrations | `uv run alembic upgrade head` (uses `DATABASE_URL`). Run it **before** deploying code that needs the new schema; new tables are unused by the old code, so this order is always safe |
 | Update keys in the cloud after editing `.env` | `uv run modal secret create yla-secrets --from-dotenv .env --force` |
 | Change channels or topics | Edit `config/settings.yaml`, then `uv run yla validate-config`, `uv run yla sync-config`, and deploy |
+| Register the weekly drift check | `powershell -ExecutionPolicy Bypass -File scripts\windows\register-drift-task.ps1` |
 | Upgrade dependencies | `uv lock --upgrade`, `uv sync`, `uv run pytest`, then deploy |
 | Restore data | Use Neon's restore (branch from a point in time) in the Neon console; the free plan keeps a short history window |

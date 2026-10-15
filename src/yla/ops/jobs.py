@@ -25,6 +25,7 @@ JOB_TIME_LIMITS = {
     "daily_pipeline": timedelta(minutes=60),  # Modal function timeout
     "send_digest": timedelta(minutes=10),  # Modal function timeout
     "local_worker": timedelta(minutes=60),  # Windows scheduled task time limit
+    "eval_drift": timedelta(minutes=120),  # Windows scheduled task time limit
 }
 GRACE = timedelta(minutes=5)
 STALE_REASON = "stale_run_timeout: exceeded the platform time limit without finishing"
