@@ -135,6 +135,13 @@ def _per_topic(scores: Sequence[VideoScore], topics: Sequence[str]) -> list[str]
             macro.append(micro_prf([Counts(tp, fp, fn)]).f1 or 0.0)
             included.append(topic)
         lines.append(f"| {topic} | {positives} | {tp} | {fp} | {fn} |")
+    total = sum((s.counts("final") for s in scores), Counts())
+    lines += [
+        f"| **All topics** | {total.tp + total.fn} | {total.tp} | {total.fp} | {total.fn} |",
+        "",
+        f"The totals give the final layer above: precision {total.tp}/{total.tp + total.fp}, "
+        f"recall {total.tp}/{total.tp + total.fn}.",
+    ]
     lines.append("")
     if macro:
         lines.append(

@@ -140,6 +140,8 @@ def test_run_score_and_report_without_a_database(tmp_path: Path, no_database: No
 
     report = build_report(data, [load_run(run, data, titles)])
     assert "| final | 0.75 | 1.00 | 0.86 |" in report  # 3 TP, 1 FP, 0 FN
+    assert "| **All topics** | 3 | 3 | 1 | 0 |" in report  # the per-topic table adds up to it
+    assert "precision 3/4, recall 3/3" in report
     assert "Rules added 2 topic(s)" in report
 
 
