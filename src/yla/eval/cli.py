@@ -96,6 +96,12 @@ def run_command(
     model: Annotated[str, typer.Option(help="OpenRouter model ID; one model, no fallback")],
     run_id: Annotated[str | None, typer.Option(help="Default: <date>-<model>")] = None,
     limit: Annotated[int | None, typer.Option(help="Attempt at most this many videos")] = None,
+    input_mode: Annotated[
+        str,
+        typer.Option(
+            "--input", help="transcript, or title: the title_only_subset from title and description only"
+        ),
+    ] = "transcript",
     dataset_path: DatasetPath = DEFAULT_DATASET_PATH,
     cache_dir: CacheDir = DEFAULT_CACHE_DIR,
     runs_dir: RunsDir = DEFAULT_RUNS_DIR,
@@ -111,10 +117,11 @@ def run_command(
     with httpx.Client(timeout=httpx.Timeout(30.0, read=200.0)) as http:
         client = OpenRouterClient(key.get_secret_value(), http)
         meta = new_meta(
-            run_id=run_id or _default_run_id(model),
+            run_id=run_id or _default_run_id(model) + ("-title" if input_mode == "title" else ""),
             model=model,
             dataset=dataset,
             temperature=client.temperature,
+            input=input_mode,
         )
         run = create_run(meta, runs_dir)
 

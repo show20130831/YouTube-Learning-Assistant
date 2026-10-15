@@ -31,6 +31,8 @@ from yla.eval.dataset import DEFAULT_RUNS_DIR, Cache, Dataset
 from yla.llm.client import ChatMessage, LLMClient, LLMResponse
 from yla.llm.prompts import PROMPT_VERSION
 
+INPUTS = ("transcript", "title")
+
 
 class RunMeta(BaseModel):
     run_id: str
@@ -40,6 +42,7 @@ class RunMeta(BaseModel):
     dataset_version: str  # when the run started; it may continue on later versions
     temperature: float | None
     top_p: float | None = None  # not sent: the provider default applies
+    input: str = "transcript"  # "transcript" (best available text) or "title" (title + description only)
     created_at: datetime
 
 
@@ -128,8 +131,12 @@ def create_run(meta: RunMeta, runs_dir: Path = DEFAULT_RUNS_DIR) -> Run:
         existing = run.meta()
         # A run may continue on a newer dataset version: versions only add videos, and labels of
         # videos already used are frozen. The model and prompt must not change within a run.
-        if (existing.model, existing.prompt_version) != (meta.model, meta.prompt_version):
-            raise ValueError(f"run {meta.run_id} exists with a different model or prompt")
+        if (existing.model, existing.prompt_version, existing.input) != (
+            meta.model,
+            meta.prompt_version,
+            meta.input,
+        ):
+            raise ValueError(f"run {meta.run_id} exists with a different model, prompt or input")
         return run
     run.root.mkdir(parents=True, exist_ok=True)
     run.meta_path.write_text(meta.model_dump_json(indent=1), encoding="utf-8")
@@ -137,8 +144,16 @@ def create_run(meta: RunMeta, runs_dir: Path = DEFAULT_RUNS_DIR) -> Run:
 
 
 def new_meta(
-    *, run_id: str, model: str, dataset: Dataset, temperature: float | None, now: datetime | None = None
+    *,
+    run_id: str,
+    model: str,
+    dataset: Dataset,
+    temperature: float | None,
+    input: str = "transcript",
+    now: datetime | None = None,
 ) -> RunMeta:
+    if input not in INPUTS:
+        raise ValueError(f"input must be one of {INPUTS}")
     return RunMeta(
         run_id=run_id,
         model=model,
@@ -146,6 +161,7 @@ def new_meta(
         rules_version=RULES_VERSION,
         dataset_version=dataset.version,
         temperature=temperature,
+        input=input,
         created_at=now or datetime.now(UTC),
     )
 
@@ -173,7 +189,10 @@ def run_dataset(
         previous.setdefault(record.video_id, []).append(record)
 
     summary = RunSummary()
+    title_only = meta.input == "title"
     for item in dataset.labelled:
+        if title_only and item.video_id not in dataset.title_only_subset:
+            continue
         done = previous.get(item.video_id, [])
         if any(r.status in ("ok", "no_text") for r in done):
             summary.skipped += 1
@@ -186,7 +205,7 @@ def run_dataset(
             break
 
         tier = choose_content(
-            video.transcript(),
+            None if title_only else video.transcript(),
             video.title,
             video.description,
             min_description_chars=dataset.min_description_chars,

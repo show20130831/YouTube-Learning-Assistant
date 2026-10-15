@@ -23,7 +23,7 @@ from yla.analysis.topics import TopicMatcher
 from yla.eval.dataset import Dataset, Item
 from yla.eval.runner import Record
 from yla.eval.stats import Counts
-from yla.llm.schemas import MAX_KEY_POINTS, VideoAnalysis, normalize
+from yla.llm.schemas import MAX_KEY_POINTS, MAX_KEY_POINTS_TOPIC_GUESS, VideoAnalysis, normalize
 
 LAYERS = ("title_only", "llm_only", "final")
 
@@ -56,7 +56,13 @@ class VideoScore:
         return self.topics["final"] - self.topics["llm_only"]
 
 
-def residual_violations(analysis: VideoAnalysis, topic_names: set[str]) -> list[str]:
+# The topic-guess tier (title and description only) must read as a guess; the prompt asks for these.
+SPECULATIVE_MARKERS = ("可能", "推測", "或許", "似乎", "應該", "看起來", "疑似", "大概")
+
+
+def residual_violations(
+    analysis: VideoAnalysis, topic_names: set[str], *, topic_guess: bool = False
+) -> list[str]:
     texts = [analysis.one_line_summary, *analysis.key_points]
     problems = []
     if any(_HALF_WIDTH_GLOSS.search(t) for t in texts):
@@ -65,8 +71,11 @@ def residual_violations(analysis: VideoAnalysis, topic_names: set[str]) -> list[
         problems.append("repeated gloss")
     if any(t.startswith(left) and t.endswith(right) for t in texts for left, right in _WRAPPING_QUOTES):
         problems.append("wrapping quotes")
-    if not analysis.key_points or len(analysis.key_points) > MAX_KEY_POINTS:
+    limit = MAX_KEY_POINTS_TOPIC_GUESS if topic_guess else MAX_KEY_POINTS
+    if not analysis.key_points or len(analysis.key_points) > limit:
         problems.append("key point count")
+    if topic_guess and not any(m in analysis.one_line_summary for m in SPECULATIVE_MARKERS):
+        problems.append("summary not worded as a guess")
     if set(analysis.matched_topics) - topic_names:
         problems.append("topic outside the list")
     if not 0 <= analysis.relevance_score <= 100:
@@ -93,9 +102,8 @@ def score_record(
         parsed = VideoAnalysis.model_validate(record.raw)
     except ValidationError as exc:  # recorded as ok, so this means the schema changed since
         raise ValueError(f"{record.video_id}: stored output no longer matches the schema") from exc
-    llm = normalize(
-        parsed, topic_lookup=matcher.lookup, topic_guess=record.source_type == "title_description"
-    )
+    topic_guess = record.source_type == "title_description"
+    llm = normalize(parsed, topic_lookup=matcher.lookup, topic_guess=topic_guess)
     final = reconcile_topics(llm, title, matcher)
     return VideoScore(
         video_id=record.video_id,
@@ -107,7 +115,7 @@ def score_record(
         },
         first_try_valid=first_try_valid,
         fixes=_fix_count(parsed, final),
-        violations=residual_violations(final, topic_names),
+        violations=residual_violations(final, topic_names, topic_guess=topic_guess),
     )
 
 

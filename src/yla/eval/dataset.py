@@ -67,11 +67,16 @@ class Dataset(BaseModel):
     min_description_chars: int = 150
     topics_file: str | None = None  # where ``topics`` was loaded from, when kept out of the repo
     topics: list[TopicConfig]
+    # Test videos also run with only their title and description (the topic-guess tier, one star),
+    # to check the guess rules: speculative wording and at most 3 key points.
+    title_only_subset: list[str] = []
     items: list[Item]
 
     @model_validator(mode="after")
     def _check(self) -> Dataset:
         names = {t.name for t in self.topics}
+        if unknown_ids := set(self.title_only_subset) - {i.video_id for i in self.items}:
+            raise ValueError(f"title_only_subset lists videos not in the dataset: {sorted(unknown_ids)}")
         seen: set[str] = set()
         for item in self.items:
             if item.video_id in seen:

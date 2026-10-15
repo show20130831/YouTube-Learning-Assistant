@@ -318,3 +318,46 @@ def test_rerouted_answers_are_flagged(tmp_path: Path) -> None:
         run_dataset(run, data, cache, llm)
         runs.append(load_run(run, data, {"v1": "Video one"}))
     assert "On 1 of 1 videos a different model answered" in build_report(data, runs)
+
+
+def test_title_only_runs_use_the_subset_and_check_the_guess_rules(tmp_path: Path) -> None:
+    data = Dataset(
+        version="test.1",
+        topics=TOPICS,
+        title_only_subset=["v1", "v2"],
+        items=[
+            item("v1", "Agents guessed", ["AI Agent"]),
+            item("v2", "Bad guess", []),
+            item("v3", "Not in it", []),
+        ],
+    )
+    cache = Cache(tmp_path / "cache")
+    description = "A long description of what the video covers, with enough text to make a topic guess. " * 3
+    for i in data.items:
+        cache_video(cache, i.video_id, i.title)
+        cached = cache.get(i.video_id)
+        assert cached is not None
+        cache.put(cached.model_copy(update={"description": description}))
+    guess = reply(["AI Agent"], summary="本影片可能介紹 AI Agent 的設計。")
+    bad = reply([], summary="本影片介紹工具調用。")
+    bad["key_points"] = ["一", "二", "三", "四"]  # normalize trims these to 3
+    llm = FakeLLM({"Agents guessed": [guess], "Bad guess": [bad]})
+    run = create_run(
+        new_meta(run_id="t", model="m:free", dataset=data, temperature=0.2, input="title"), tmp_path / "runs"
+    )
+    run_dataset(run, data, cache, llm)
+
+    records = {r.video_id: r for r in run.records()}
+    assert set(records) == {"v1", "v2"}  # only the subset
+    assert {r.source_type for r in records.values()} == {"title_description"}
+    scores = score_run(run.records(), data, {i.video_id: i.title for i in data.items}).scores
+    assert scores["v1"].violations == []
+    assert scores["v2"].violations == ["summary not worded as a guess"]  # 4 points were trimmed, not left
+
+    with pytest.raises(ValueError, match="different model, prompt or input"):
+        create_run(new_meta(run_id="t", model="m:free", dataset=data, temperature=0.2), tmp_path / "runs")
+
+
+def test_title_only_subset_must_be_in_the_dataset() -> None:
+    with pytest.raises(ValueError, match="title_only_subset"):
+        Dataset(version="v", topics=TOPICS, title_only_subset=["missing"], items=[item("v1", "t", [])])
