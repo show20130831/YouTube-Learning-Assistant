@@ -20,6 +20,9 @@ if ((Test-Path $log) -and (Get-Item $log).Length -gt 1MB) {
 
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
+# Python writes UTF-8; without this PowerShell decodes it with the console code page (cp950 on
+# Traditional Chinese Windows) and Chinese channel names end up garbled in the log.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $yla = Join-Path $root ".venv\Scripts\yla.exe"
 
 "===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') =====" | Out-File -FilePath $log -Append -Encoding utf8
