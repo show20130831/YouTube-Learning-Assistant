@@ -149,6 +149,8 @@ def test_metrics_cover_latency_fallbacks_and_rule_checks(session: Session) -> No
 
     text = "\n".join(render_metrics(metrics, tz=TZ))
     assert "requests 3: ok 1, timeout 1, rate_limited 1" in text
+    assert "timeout rate 1/3 (33%), format error rate 0/3 (0%)" in text
+    assert "fallback rate 1/2 (50%) of answered videos, unanswered 1/3 (33%), timeout rate 1/5 (20%)" in text
     assert "v1: half-width gloss" in text
 
 

@@ -71,6 +71,7 @@ class DayStats:
     analyses: int = 0
     stars: Counter[int] = field(default_factory=Counter)
     topics: list[int] = field(default_factory=list)  # matched topics per analysed video
+    requests: int = 0
     videos_tried: int = 0  # videos the pipeline sent to the LLM
     fallbacks: int = 0  # answered, but not by the first model tried
     unanswered: int = 0  # no model answered
@@ -144,6 +145,7 @@ def collect_metrics(session: Session, user: User, *, since: datetime) -> Metrics
     for r in requests:
         per_video[(r.job_run_id, r.video_id)].append(r)
         day = day_of(r.created_at)
+        day.requests += 1
         day.timeouts += r.result is LLMResult.TIMEOUT
         if r.result is LLMResult.OK:
             day.ok_latencies.append(r.latency_ms)
@@ -189,6 +191,11 @@ def collect_metrics(session: Session, user: User, *, since: datetime) -> Metrics
     )
 
 
+def _rate(part: int, whole: int) -> str:
+    """A rate shown with its counts: with so few requests the denominator matters."""
+    return "-" if whole == 0 else f"{part}/{whole} ({part / whole:.0%})"
+
+
 def _ms(value: int | None) -> str:
     return "-" if value is None else f"{value / 1000:.0f}s"
 
@@ -209,9 +216,25 @@ def render_metrics(metrics: Metrics, *, tz: ZoneInfo) -> list[str]:
         lines += [
             f"  {m.model}",
             f"    requests {m.requests}: {results}",
+            f"    timeout rate {_rate(m.results.get('timeout', 0), m.requests)}, "
+            f"format error rate {_rate(m.results.get('invalid', 0), m.requests)}",
             f"    latency p50 {_ms(m.p50_ms)}, p95 {_ms(m.p95_ms)} (answered only); avg tokens {tokens}",
             f"    providers: {providers}; answered by another model: {m.rerouted}",
         ]
+    total = DayStats(metrics.since.date())
+    for d in metrics.days:
+        total.requests += d.requests
+        total.videos_tried += d.videos_tried
+        total.fallbacks += d.fallbacks
+        total.unanswered += d.unanswered
+        total.timeouts += d.timeouts
+    answered = total.videos_tried - total.unanswered
+    lines += [
+        "",
+        f"Whole window: fallback rate {_rate(total.fallbacks, answered)} of answered videos, "
+        f"unanswered {_rate(total.unanswered, total.videos_tried)}, "
+        f"timeout rate {_rate(total.timeouts, total.requests)} of requests.",
+    ]
     lines += [
         "",
         "Per day          analysed  3★/2★/1★  topics/video  tried  fallback  unanswered  timeouts  "
