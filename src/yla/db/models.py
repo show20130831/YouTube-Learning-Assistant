@@ -260,3 +260,29 @@ class JobRun(Base):
     status: Mapped[JobStatus] = mapped_column(_enum(JobStatus), default=JobStatus.RUNNING)
     stats: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class LLMResult(StrEnum):
+    OK = "ok"
+    TIMEOUT = "timeout"
+    RATE_LIMITED = "rate_limited"
+    INVALID = "invalid"
+    ERROR = "error"
+
+
+class LLMRequest(Base):
+    """Every LLM request made by the daily pipeline, for monitoring latency, failures and drift."""
+
+    __tablename__ = "llm_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_run_id: Mapped[int | None] = mapped_column(ForeignKey("job_runs.id", ondelete="SET NULL"), index=True)
+    video_id: Mapped[int | None] = mapped_column(ForeignKey("videos.id", ondelete="SET NULL"))
+    model: Mapped[str] = mapped_column(String(200))  # requested
+    answered_by: Mapped[str | None] = mapped_column(String(200))  # OpenRouter may route elsewhere
+    provider: Mapped[str | None] = mapped_column(String(100))
+    result: Mapped[LLMResult] = mapped_column(_enum(LLMResult))
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = _now()

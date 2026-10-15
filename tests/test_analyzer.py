@@ -358,3 +358,43 @@ def test_score_capped_when_no_topic_matches() -> None:
     reply = good(keywords=["Cooking"], key_concepts=[], matched_topics=["Unknown"], relevance_score=90)
     outcome = analyzer(FakeLLM({"primary": [reply]})).analyze(title="Pasta", channel="C", tier=CAPTIONS)
     assert (outcome.analysis.matched_topics, outcome.analysis.relevance_score) == ([], 20)
+
+
+def test_every_request_is_logged_with_its_latency_and_result() -> None:
+    from yla.llm.client import LLMTimeout
+
+    ticks = iter([0.0, 2.5, 10.0, 10.4, 20.0, 21.0])  # start/end of each request, in seconds
+
+    class Answering(FakeLLM):
+        def complete_json(self, messages, *, schema, schema_name, model):  # type: ignore[no-untyped-def]
+            response = super().complete_json(messages, schema=schema, schema_name=schema_name, model=model)
+            usage = {"prompt_tokens": 1200, "completion_tokens": 300}
+            return LLMResponse(data=response.data, model=f"{model}-served", usage=usage, provider="Acme")
+
+    # primary times out; backup first replies with invalid JSON, then succeeds
+    llm = Answering({"primary": [LLMTimeout("slow")], "backup": [{"oops": 1}, good()]})
+    outcome = analyzer(llm, ["primary", "backup"], clock=lambda: next(ticks)).analyze(
+        title="T", channel="C", tier=CAPTIONS
+    )
+    assert [(r.model, r.result, r.latency_ms) for r in outcome.requests] == [
+        ("primary", "timeout", 2500),
+        ("backup", "invalid", 400),
+        ("backup", "ok", 1000),
+    ]
+    ok = outcome.requests[-1]
+    assert (ok.answered_by, ok.provider, ok.prompt_tokens, ok.completion_tokens) == (
+        "backup-served",
+        "Acme",
+        1200,
+        300,
+    )
+    assert outcome.requests[1].answered_by == "backup-served"  # an invalid reply still has a sender
+    assert outcome.requests[0].answered_by is None  # a timeout has none
+
+
+def test_failed_analysis_keeps_its_request_log() -> None:
+    with pytest.raises(AnalysisFailed) as failure:
+        analyzer(FakeLLM({"primary": [LLMRateLimited("quota")]})).analyze(
+            title="T", channel="C", tier=CAPTIONS
+        )
+    assert [(r.model, r.result) for r in failure.value.requests] == [("primary", "rate_limited")]

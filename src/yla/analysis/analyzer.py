@@ -12,7 +12,8 @@ the prompt asks the model to state that only the first part was analysed.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from pydantic import ValidationError
@@ -23,7 +24,15 @@ from yla.analysis.topics import TopicMatcher
 from yla.config import TopicConfig
 from yla.content.tiering import ContentTier
 from yla.db.models import Analysis, SourceType, UserVideoRelevance, Video, VideoStatus
-from yla.llm.client import ChatMessage, LLMClient, LLMError, LLMOutputInvalid, LLMRateLimited, LLMTimeout
+from yla.llm.client import (
+    ChatMessage,
+    LLMClient,
+    LLMError,
+    LLMOutputInvalid,
+    LLMRateLimited,
+    LLMResponse,
+    LLMTimeout,
+)
 from yla.llm.prompts import PROMPT_VERSION, build_messages
 from yla.llm.schemas import ANALYSIS_JSON_SCHEMA, ANALYSIS_SCHEMA_NAME, VideoAnalysis, normalize
 
@@ -32,6 +41,34 @@ logger = logging.getLogger(__name__)
 
 # Per-request results, recorded for operations metrics (which models fail, and how).
 Attempt = tuple[str, str]  # (model, "ok" | "timeout" | "rate_limited" | "invalid" | "error")
+
+
+@dataclass(frozen=True)
+class RequestLog:
+    """One LLM request, for monitoring: who answered, how, how fast and at what size."""
+
+    model: str  # the model requested
+    result: str  # "ok" | "timeout" | "rate_limited" | "invalid" | "error"
+    latency_ms: int
+    answered_by: str | None = None  # the model that actually replied (OpenRouter may reroute)
+    provider: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+
+def _request_log(
+    model: str, result: str, started: float, clock: Callable[[], float], response: LLMResponse | None
+) -> RequestLog:
+    usage = response.usage if response else {}
+    return RequestLog(
+        model=model,
+        result=result,
+        latency_ms=round((clock() - started) * 1000),
+        answered_by=response.model if response else None,
+        provider=response.provider if response else None,
+        prompt_tokens=usage.get("prompt_tokens"),
+        completion_tokens=usage.get("completion_tokens"),
+    )
 
 
 def _attempt_result(exc: Exception) -> str:
@@ -52,6 +89,7 @@ class AnalysisFailed(Exception):
         *,
         rate_limited: bool = False,
         attempts: list[Attempt] | None = None,
+        requests: list[RequestLog] | None = None,
     ) -> None:
         super().__init__("; ".join(f"{model}: {error}" for model, error in errors.items()))
         self.errors = errors
@@ -59,6 +97,7 @@ class AnalysisFailed(Exception):
         # Every model answered 429: the free daily quota is most likely used up for today.
         self.rate_limited = rate_limited
         self.attempts = attempts or []
+        self.requests = requests or []
 
 
 @dataclass(frozen=True)
@@ -72,6 +111,7 @@ class AnalysisOutcome:
     errors: dict[str, str] = field(default_factory=dict)  # models that failed before one succeeded
     attempts: list[Attempt] = field(default_factory=list)
     primary_ok: bool = True  # the first configured model produced the result
+    requests: list[RequestLog] = field(default_factory=list)
 
 
 MIN_SCORE_WITH_TOPICS = 40
@@ -104,6 +144,7 @@ class Analyzer:
         topics: Sequence[TopicConfig],
         *,
         max_input_chars: int = 400_000,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not models:
             raise ValueError("no LLM model configured: set llm.primary_model in settings.yaml")
@@ -112,6 +153,7 @@ class Analyzer:
         self._topics = list(topics)
         self._matcher = TopicMatcher(topics)
         self._max_input_chars = max_input_chars
+        self._clock = clock
 
     def analyze(self, *, title: str, channel: str, tier: ContentTier) -> AnalysisOutcome:
         if not tier.available:
@@ -128,10 +170,13 @@ class Analyzer:
         errors: dict[str, str] = {}
         rate_limited: set[str] = set()
         attempts: list[Attempt] = []
+        requests: list[RequestLog] = []
         for model in self._models:
             attempt_messages = list(messages)
             for attempt in (1, 2):
                 calls += 1
+                started = self._clock()
+                response: LLMResponse | None = None
                 try:
                     response = self._client.complete_json(
                         attempt_messages,
@@ -142,6 +187,7 @@ class Analyzer:
                     parsed = VideoAnalysis.model_validate(response.data)
                 except (LLMOutputInvalid, ValidationError) as exc:
                     attempts.append((model, _attempt_result(exc)))
+                    requests.append(_request_log(model, "invalid", started, self._clock, response))
                     errors[model] = f"invalid output: {str(exc)[:200]}"
                     if attempt == 1:
                         attempt_messages = [*messages, _fix_request(exc)]
@@ -149,10 +195,12 @@ class Analyzer:
                     break
                 except LLMError as exc:
                     attempts.append((model, _attempt_result(exc)))
+                    requests.append(_request_log(model, _attempt_result(exc), started, self._clock, None))
                     errors[model] = f"{type(exc).__name__}: {exc}"
                     if isinstance(exc, LLMRateLimited):
                         rate_limited.add(model)
                     break
+                requests.append(_request_log(model, "ok", started, self._clock, response))
 
                 analysis = normalize(
                     parsed,
@@ -174,9 +222,16 @@ class Analyzer:
                     errors=errors,
                     attempts=attempts,
                     primary_ok=model == self._models[0],
+                    requests=requests,
                 )
             logger.warning("model %s failed: %s", model, errors.get(model))
-        raise AnalysisFailed(errors, calls, rate_limited=rate_limited == set(self._models), attempts=attempts)
+        raise AnalysisFailed(
+            errors,
+            calls,
+            rate_limited=rate_limited == set(self._models),
+            attempts=attempts,
+            requests=requests,
+        )
 
 
 def _fix_request(error: Exception) -> ChatMessage:

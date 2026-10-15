@@ -23,11 +23,22 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yla.analysis.analyzer import AnalysisFailed, Analyzer, Attempt, store_analysis
+from yla.analysis.analyzer import AnalysisFailed, Analyzer, Attempt, RequestLog, store_analysis
 from yla.analysis.topics import TopicMatcher
 from yla.config import AppSettings
 from yla.content.tiering import ContentTier, choose_content
-from yla.db.models import Analysis, Channel, JobRun, JobStatus, Subscription, User, Video, VideoStatus
+from yla.db.models import (
+    Analysis,
+    Channel,
+    JobRun,
+    JobStatus,
+    LLMRequest,
+    LLMResult,
+    Subscription,
+    User,
+    Video,
+    VideoStatus,
+)
 from yla.ops.jobs import config_fingerprint, start_job
 from yla.ops.logging import run_context
 from yla.pipeline.discovery import DiscoveryReport, discover_videos
@@ -225,6 +236,7 @@ def _process(
         except AnalysisFailed as exc:
             report.llm_calls += exc.calls
             report.record_llm(exc.attempts, primary_ok=False)
+            _log_requests(session, report, video, exc.requests)
             video.last_error = str(exc)[:2000]
             if exc.rate_limited:
                 report.quota_exhausted = True
@@ -241,10 +253,29 @@ def _process(
 
         report.llm_calls += outcome.calls
         report.record_llm(outcome.attempts, primary_ok=outcome.primary_ok)
+        _log_requests(session, report, video, outcome.requests)
         store_analysis(session, video=video, user_id=user.id, outcome=outcome)
         report.analyzed.append(video.youtube_video_id)
         budget -= 1
         session.commit()
+
+
+def _log_requests(session: Session, report: DailyReport, video: Video, requests: list[RequestLog]) -> None:
+    """One row per LLM request, for ``yla metrics`` (latency, failures, rerouting)."""
+    session.add_all(
+        LLMRequest(
+            job_run_id=int(report.run_id),
+            video_id=video.id,
+            model=r.model,
+            answered_by=r.answered_by,
+            provider=r.provider,
+            result=LLMResult(r.result),
+            latency_ms=r.latency_ms,
+            prompt_tokens=r.prompt_tokens,
+            completion_tokens=r.completion_tokens,
+        )
+        for r in requests
+    )
 
 
 def _defer(video: Video, now: datetime, report: DailyReport) -> None:

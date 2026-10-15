@@ -313,3 +313,15 @@ def test_llm_outcomes_and_config_are_recorded(session: Session, monkeypatch: pyt
     assert (stats["analysis_attempts"], stats["primary_failures"]) == (2, 1)
     assert stats["config_fingerprint"] == config_fingerprint(settings)
     assert stats["git_sha"] == "abc1234"
+
+    from yla.db.models import LLMRequest
+
+    job_id = session.scalars(select(JobRun.id)).one()
+    logged = session.scalars(select(LLMRequest).order_by(LLMRequest.id)).all()
+    assert sorted((r.model, r.result.value) for r in logged) == [
+        ("m1", "ok"),
+        ("m1", "timeout"),
+        ("m2", "ok"),
+    ]
+    assert {r.job_run_id for r in logged} == {job_id}
+    assert all(r.video_id is not None and r.latency_ms >= 0 for r in logged)
