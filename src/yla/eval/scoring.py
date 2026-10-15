@@ -12,25 +12,20 @@ and splits topic quality into layers, so an improvement can be traced to the mod
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from pydantic import ValidationError
 
 from yla.analysis.analyzer import reconcile_topics
+from yla.analysis.checks import fix_count, residual_violations
 from yla.analysis.topics import TopicMatcher
 from yla.eval.dataset import Dataset, Item
 from yla.eval.runner import Record
 from yla.eval.stats import Counts
-from yla.llm.schemas import MAX_KEY_POINTS, MAX_KEY_POINTS_TOPIC_GUESS, VideoAnalysis, normalize
+from yla.llm.schemas import VideoAnalysis, normalize
 
 LAYERS = ("title_only", "llm_only", "final")
-
-# Problems the rules are meant to remove; any left in the final output is a residual violation.
-_HALF_WIDTH_GLOSS = re.compile(r"[㐀-鿿]\s*\(\s*[A-Za-z]")
-_REPEATED_GLOSS = re.compile(r"([A-Za-z][A-Za-z0-9 .\-]*)（\s*\1\s*）", re.IGNORECASE)
-_WRAPPING_QUOTES = (("「", "」"), ("“", "”"), ('"', '"'), ("『", "』"))
 
 
 @dataclass(frozen=True)
@@ -54,41 +49,6 @@ class VideoScore:
     def rescued(self) -> frozenset[str]:
         """Topics the rules added on top of the model's own choice."""
         return self.topics["final"] - self.topics["llm_only"]
-
-
-# The topic-guess tier (title and description only) must read as a guess; the prompt asks for these.
-SPECULATIVE_MARKERS = ("可能", "推測", "或許", "似乎", "應該", "看起來", "疑似", "大概")
-
-
-def residual_violations(
-    analysis: VideoAnalysis, topic_names: set[str], *, topic_guess: bool = False
-) -> list[str]:
-    texts = [analysis.one_line_summary, *analysis.key_points]
-    problems = []
-    if any(_HALF_WIDTH_GLOSS.search(t) for t in texts):
-        problems.append("half-width gloss")
-    if any(_REPEATED_GLOSS.search(t) for t in texts):
-        problems.append("repeated gloss")
-    if any(t.startswith(left) and t.endswith(right) for t in texts for left, right in _WRAPPING_QUOTES):
-        problems.append("wrapping quotes")
-    limit = MAX_KEY_POINTS_TOPIC_GUESS if topic_guess else MAX_KEY_POINTS
-    if not analysis.key_points or len(analysis.key_points) > limit:
-        problems.append("key point count")
-    if topic_guess and not any(m in analysis.one_line_summary for m in SPECULATIVE_MARKERS):
-        problems.append("summary not worded as a guess")
-    if set(analysis.matched_topics) - topic_names:
-        problems.append("topic outside the list")
-    if not 0 <= analysis.relevance_score <= 100:
-        problems.append("score out of range")
-    return problems
-
-
-def _fix_count(raw: VideoAnalysis, final: VideoAnalysis) -> int:
-    changed = int(raw.one_line_summary.strip() != final.one_line_summary)
-    raw_points = [p.strip() for p in raw.key_points]
-    changed += sum(1 for p in final.key_points if p not in raw_points)
-    changed += max(0, len(raw.key_points) - len(final.key_points))
-    return changed
 
 
 @dataclass(frozen=True)
@@ -131,7 +91,7 @@ def score_record(
             "final": frozenset(final.matched_topics),
         },
         first_try_valid=first_try_valid,
-        fixes=_fix_count(parsed, final),
+        fixes=fix_count(parsed, final),
         violations=residual_violations(final, topic_names, topic_guess=topic_guess),
     )
 

@@ -7,12 +7,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from yla.analysis.checks import residual_violations
 from yla.config import TopicConfig
 from yla.eval.dataset import Cache, CachedVideo, Dataset, Item, Labels, Split
 from yla.eval.fetch import VideoInfo, fill_cache
 from yla.eval.report import build_report, load_run
 from yla.eval.runner import create_run, new_meta, run_dataset
-from yla.eval.scoring import residual_violations, score_run
+from yla.eval.scoring import score_run
 from yla.llm.client import ChatMessage, LLMRateLimited, LLMResponse, LLMTimeout
 from yla.llm.schemas import VideoAnalysis
 from yla.youtube.transcripts import TranscriptResult, TranscriptStatus
