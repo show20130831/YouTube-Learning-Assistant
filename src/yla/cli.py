@@ -285,6 +285,23 @@ def status_command(
             _warn(f"               {run.error.splitlines()[0][:150]}")
 
 
+@app.command("metrics")
+def metrics_command(
+    days: Annotated[int, typer.Option(help="How many days back to report")] = 14,
+) -> None:
+    """LLM latency, failures, fallbacks and output trends from the production records."""
+    from zoneinfo import ZoneInfo
+
+    from yla.ops.metrics import collect_metrics, render_metrics
+
+    with _db_session() as session:
+        user = _user_or_exit(session)
+        metrics = collect_metrics(session, user, since=datetime.now(UTC) - timedelta(days=days))
+        lines = render_metrics(metrics, tz=ZoneInfo(user.timezone))
+    for line in lines:
+        typer.echo(line)
+
+
 def _summarize_stats(job_name: str, stats: dict[str, Any]) -> str:
     feed_errors = len(stats.get("feed_errors") or {})
     feeds = f", RSS failed {feed_errors}" if feed_errors else ""

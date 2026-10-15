@@ -34,8 +34,14 @@ Persistent problems reported in the digest:
 | Primary model unreliable | It failed in at least half of its analyses in the last 3 runs |
 | Repeated caption errors | The last 2 worker runs had caption errors (videos without captions do not count) |
 | Mostly topic guesses | More than half of the last 7 days' summaries (at least 4) had no captions |
+| Answered by another model | In the last pipeline run, OpenRouter answered a model ID with a different model |
+| Rule problems left in outputs | A summary from the last day still has a problem the post-processing rules remove (half-width gloss, wrapping quotes, too many key points, and so on) |
 
 Cloud feed failures alone are not reported: the cloud read is only a backup for the worker and fails routinely.
+
+The last two are invariants, not trends: one occurrence is enough. Latency, failure rates and the number of
+topics per video are not alerted on, because with 1-5 videos a day no threshold could be justified; `yla metrics`
+shows them as trends instead.
 
 ## Tools
 
@@ -43,6 +49,7 @@ Cloud feed failures alone are not reported: the cloud read is only a backup for 
 |---|---|
 | `uv run yla health` | Checks every service, the configuration and usage. Never calls the LLM. Exit code 1 on any failure |
 | `uv run yla status --days 3` | Recent runs of each job with their key numbers and errors |
+| `uv run yla metrics --days 14` | LLM trends: results, latency and tokens per model, fallbacks, star mix, topics per video, rule fixes and problems per day |
 | `uv run yla digest --dry-run` | Shows today's digest without sending it |
 | `uv run modal app logs youtube-learning-assistant` | Cloud logs |
 | `logs/worker.log` | Local worker output, one block per run |
@@ -103,6 +110,24 @@ Run `uv run yla health` once a week, and after any change to settings, keys or c
 - **Fix:** fix the cause, redeploy, then rerun today's analysis (see Routine tasks). The digest at 12:00 still goes out and reports the failure.
 - **Verify:** the rerun succeeds in `uv run yla status`.
 
+### "要求 X 卻由 Y 回應" (answered by another model)
+
+- **Cause:** OpenRouter served a model ID with a different model (rerouting, or the model was replaced). The
+  summaries may change without any change on our side.
+- **Check:** `uv run yla metrics --days 7`: the model's providers and "answered by another model".
+- **Decide:** once, it may be a temporary reroute. If it persists, treat it as a model change: run the evaluation
+  (`yla eval run`) on the current setting and compare with the last baseline before trusting the summaries.
+- **Fix:** if the replacement is worse, choose another primary model (see "Primary model unreliable").
+
+### "摘要仍有程式應修正的格式問題" (rule problems left in outputs)
+
+- **Cause:** a rule in `normalize` or `tidy_text` stopped working, or the model's output changed shape so the
+  rules no longer match it.
+- **Check:** `uv run yla metrics --days 2` lists the videos and problems. Reproduce with
+  `uv run yla analyze VIDEO_ID --dry-run --raw`.
+- **Fix:** add the case to the rule tests, fix the rule, bump `RULES_VERSION`, and replay the evaluation runs
+  (`yla eval report`) to check nothing else changed.
+
 ### Cloud settings differ from settings.yaml
 
 - **Cause:** `config/settings.yaml` changed without redeploying, so the cloud still uses the old channels, topics or models.
@@ -127,6 +152,7 @@ Run `uv run yla health` once a week, and after any change to settings, keys or c
 | Rerun today's analysis in the cloud | `uv run modal run src/yla/modal_app.py::daily_pipeline --skip-discover` |
 | Preview today's digest from the cloud | `uv run modal run src/yla/modal_app.py::send_digest --dry-run` |
 | Deploy code or settings changes | `uv run modal deploy src/yla/modal_app.py` |
+| Apply database migrations | `uv run alembic upgrade head` (uses `DATABASE_URL`). Run it **before** deploying code that needs the new schema; new tables are unused by the old code, so this order is always safe |
 | Update keys in the cloud after editing `.env` | `uv run modal secret create yla-secrets --from-dotenv .env --force` |
 | Change channels or topics | Edit `config/settings.yaml`, then `uv run yla validate-config`, `uv run yla sync-config`, and deploy |
 | Upgrade dependencies | `uv lock --upgrade`, `uv sync`, `uv run pytest`, then deploy |
