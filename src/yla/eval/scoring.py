@@ -91,6 +91,28 @@ def _fix_count(raw: VideoAnalysis, final: VideoAnalysis) -> int:
     return changed
 
 
+@dataclass(frozen=True)
+class Replay:
+    """One stored answer passed through the current rules again."""
+
+    raw: VideoAnalysis  # what the model returned
+    llm: VideoAnalysis  # after normalisation (model's own topics)
+    final: VideoAnalysis  # what the product shows
+    topic_guess: bool
+
+
+def replay(record: Record, title: str, matcher: TopicMatcher) -> Replay:
+    if record.raw is None:
+        raise ValueError(f"{record.video_id}: no stored answer to replay")
+    try:
+        parsed = VideoAnalysis.model_validate(record.raw)
+    except ValidationError as exc:  # recorded as ok, so this means the schema changed since
+        raise ValueError(f"{record.video_id}: stored output no longer matches the schema") from exc
+    topic_guess = record.source_type == "title_description"
+    llm = normalize(parsed, topic_lookup=matcher.lookup, topic_guess=topic_guess)
+    return Replay(parsed, llm, reconcile_topics(llm, title, matcher), topic_guess)
+
+
 def score_record(
     record: Record, item: Item, title: str, matcher: TopicMatcher, topic_names: set[str]
 ) -> VideoScore:
@@ -98,13 +120,8 @@ def score_record(
         raise ValueError("only answered, labelled videos can be scored")
     first = record.attempts[0][1] if record.attempts else None
     first_try_valid = None if first in (None, "timeout", "rate_limited", "error") else first == "ok"
-    try:
-        parsed = VideoAnalysis.model_validate(record.raw)
-    except ValidationError as exc:  # recorded as ok, so this means the schema changed since
-        raise ValueError(f"{record.video_id}: stored output no longer matches the schema") from exc
-    topic_guess = record.source_type == "title_description"
-    llm = normalize(parsed, topic_lookup=matcher.lookup, topic_guess=topic_guess)
-    final = reconcile_topics(llm, title, matcher)
+    replayed = replay(record, title, matcher)
+    parsed, llm, final, topic_guess = replayed.raw, replayed.llm, replayed.final, replayed.topic_guess
     return VideoScore(
         video_id=record.video_id,
         expected=frozenset(item.labels.topics),

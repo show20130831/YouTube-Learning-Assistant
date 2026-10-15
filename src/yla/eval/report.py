@@ -12,9 +12,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from yla.analysis.analyzer import RULES_VERSION
+from yla.analysis.topics import TopicMatcher
+from yla.eval.blind import BlindSession, ConceptState, Severity, concept_mentioned
 from yla.eval.dataset import Dataset, LabelStatus
 from yla.eval.runner import Record, Run, RunMeta
-from yla.eval.scoring import LAYERS, RunScore, VideoScore, percentile, score_run
+from yla.eval.scoring import LAYERS, RunScore, VideoScore, percentile, replay, score_run
 from yla.eval.stats import (
     Counts,
     clopper_pearson,
@@ -42,11 +44,12 @@ class LoadedRun:
     meta: RunMeta
     records: list[Record]
     score: RunScore
+    titles: dict[str, str]
 
 
 def load_run(run: Run, dataset: Dataset, titles: dict[str, str]) -> LoadedRun:
     records = run.records()
-    return LoadedRun(run.meta(), records, score_run(records, dataset, titles))
+    return LoadedRun(run.meta(), records, score_run(records, dataset, titles), titles)
 
 
 def _conditions(dataset: Dataset, runs: Sequence[LoadedRun]) -> list[str]:
@@ -293,7 +296,80 @@ def _comparison(a: LoadedRun, b: LoadedRun) -> list[str]:
     return [*lines, ""]
 
 
-def build_report(dataset: Dataset, runs: Sequence[LoadedRun]) -> str:
+def _blind(dataset: Dataset, a: LoadedRun, b: LoadedRun, session: BlindSession | None) -> list[str]:
+    lines = ["### Blind human review", ""]
+    if session is None or not session.judgments:
+        return [
+            *lines,
+            "Not done: summary quality (contradictions, unsupported claims, coverage) is unmeasured.",
+            "",
+        ]
+    items = {i.video_id: i for i in dataset.items}
+    matcher = TopicMatcher(dataset.topics)
+    n = len(session.judgments)
+    lines += [
+        f"{n} video(s) reviewed by a person who saw the outputs as X and Y in a seeded random order. "
+        "Descriptive only: too few for a test.",
+        "",
+        "| Measure | A | B |",
+        "|---|---|---|",
+    ]
+    rows: dict[str, list[str]] = {}
+    quotes: list[str] = []
+    agree = Counter[str]()
+    for label, run in (("A", a), ("B", b)):
+        outputs = [(j, j.for_run(run.meta.run_id)) for j in session.judgments]
+        severity = Counter(i.severity for _, o in outputs for i in o.issues)
+        states = Counter(s for _, o in outputs for s in o.concepts.values())
+        concepts = sum(states.values())
+        cells = {
+            "Preferred": f"{sum(j.preferred_run() == run.meta.run_id for j, _ in outputs)} (ties "
+            f"{sum(j.preferred_run() is None for j, _ in outputs)})",
+            "Main takeaway conveyed": f"{sum(o.takeaway_conveyed for _, o in outputs)}/{n}",
+            "Concepts explained correctly": f"{states[ConceptState.EXPLAINED]}/{concepts}",
+            "Concepts explained wrongly": f"{states[ConceptState.WRONG]}/{concepts}",
+            "Concepts named only / missing": (
+                f"{states[ConceptState.NAME_ONLY]} / {states[ConceptState.NOT_MENTIONED]}"
+            ),
+            **{f"{s.value} issues": str(severity[s]) for s in Severity},
+        }
+        for key, value in cells.items():
+            rows.setdefault(key, []).append(value)
+        records = {r.video_id: r for r in run.records if r.status == "ok"}
+        for judgment, output in outputs:
+            quotes += [
+                f"- {label}, `{judgment.video_id}`, {i.severity.value}: {i.text}"
+                for i in output.issues
+                if i.severity is not Severity.E4
+            ]
+            labels = items[judgment.video_id].labels
+            if labels is None or judgment.video_id not in records:
+                continue
+            final = replay(records[judgment.video_id], run.titles[judgment.video_id], matcher).final
+            for concept in labels.concepts:
+                human = (
+                    output.concepts.get(concept.term, ConceptState.NOT_MENTIONED)
+                    is not ConceptState.NOT_MENTIONED
+                )
+                auto = concept_mentioned(final, concept)
+                agree[("tp" if auto else "fn") if human else ("fp" if auto else "tn")] += 1
+    lines += [f"| {key} | {values[0]} | {values[1]} |" for key, values in rows.items()]
+    lines += ["", "E1-E3 issues (E4 is counted only):", "", *(quotes or ["- none"]), ""]
+    checked = sum(agree.values())
+    if checked:
+        precision = agree["tp"] / (agree["tp"] + agree["fp"]) if agree["tp"] + agree["fp"] else None
+        recall = agree["tp"] / (agree["tp"] + agree["fn"]) if agree["tp"] + agree["fn"] else None
+        lines += [
+            f"Automatic concept check against the person, on {checked} concept judgments (mentioned or not): "
+            f"agreement {(agree['tp'] + agree['tn']) / checked:.2f}, precision {_pct(precision)}, "
+            f"recall {_pct(recall)}. The automatic check stays an alarm-only metric until this "
+            "agreement holds up.",
+            "",
+        ]
+    return lines
+
+
+def build_report(dataset: Dataset, runs: Sequence[LoadedRun], *, blind: BlindSession | None = None) -> str:
     lines = [
         "# Evaluation report",
         "",
@@ -306,4 +382,9 @@ def build_report(dataset: Dataset, runs: Sequence[LoadedRun]) -> str:
         lines += _single(run, dataset)
     if len(runs) == 2:
         lines += _comparison(runs[0], runs[1])
+        if (
+            runs[0].meta.model != runs[1].meta.model
+            or runs[0].meta.prompt_version != runs[1].meta.prompt_version
+        ):
+            lines += _blind(dataset, runs[0], runs[1], blind)
     return "\n".join(lines).rstrip() + "\n"

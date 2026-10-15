@@ -11,7 +11,31 @@ from zoneinfo import ZoneInfo
 import httpx
 import typer
 
-from yla.eval.dataset import DEFAULT_CACHE_DIR, DEFAULT_DATASET_PATH, DEFAULT_RUNS_DIR, Cache, load_dataset
+from yla.analysis.topics import TopicMatcher
+from yla.eval.blind import (
+    BlindSession,
+    ConceptState,
+    Issue,
+    OutputJudgment,
+    PlannedPair,
+    Preference,
+    Severity,
+    load_session,
+    new_judgment,
+    plan_pairs,
+    record_judgment,
+    render_output,
+    save_session,
+)
+from yla.eval.dataset import (
+    DEFAULT_CACHE_DIR,
+    DEFAULT_DATASET_PATH,
+    DEFAULT_RUNS_DIR,
+    Cache,
+    Dataset,
+    Labels,
+    load_dataset,
+)
 from yla.eval.fetch import VideoInfo, fill_cache
 from yla.eval.report import build_report, load_run
 from yla.eval.runner import Record, create_run, new_meta, open_run, run_dataset
@@ -149,11 +173,18 @@ def report_command(
     output: Annotated[
         Path | None, typer.Option(help="Write the Markdown here instead of printing it")
     ] = None,
+    no_blind: Annotated[
+        bool, typer.Option(help="Compare two configurations without the blind human review")
+    ] = False,
     dataset_path: DatasetPath = DEFAULT_DATASET_PATH,
     cache_dir: CacheDir = DEFAULT_CACHE_DIR,
     runs_dir: RunsDir = DEFAULT_RUNS_DIR,
 ) -> None:
-    """Score runs from their raw outputs with the current rules, and compare two runs."""
+    """Score runs from their raw outputs with the current rules, and compare two runs.
+
+    Comparing two configurations needs the blind review first (``yla eval blind``): seeing the
+    scores before judging the summaries would bias the judgments.
+    """
     if not 1 <= len(run_ids) <= 2:
         raise _fail("give one run, or two to compare")
     dataset = load_dataset(dataset_path)
@@ -162,10 +193,116 @@ def report_command(
         runs = [load_run(open_run(r, runs_dir), dataset, titles) for r in run_ids]
     except FileNotFoundError as exc:
         raise _fail(str(exc)) from exc
-    text = build_report(dataset, runs)
+    session = None
+    if len(runs) == 2 and (runs[0].meta.model, runs[0].meta.prompt_version) != (
+        runs[1].meta.model,
+        runs[1].meta.prompt_version,
+    ):
+        session = load_session(runs_dir, run_ids[0], run_ids[1])
+        planned = plan_pairs(dataset, run_ids[0], runs[0].records, run_ids[1], runs[1].records)
+        missing = {p.video_id for p in planned} - (session.judged() if session else set())
+        if missing and not no_blind:
+            raise _fail(
+                f"The blind review is not finished ({len(missing)} of {len(planned)} videos left): run "
+                f"`yla eval blind {run_ids[0]} {run_ids[1]}` first, or pass --no-blind to report without it."
+            )
+    text = build_report(dataset, runs, blind=session)
     if output:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(text, encoding="utf-8")
         typer.echo(f"Report written to {output}")
     else:
         typer.echo(text)
+
+
+def _ask(prompt: str, choices: dict[str, str]) -> str:
+    keys = "/".join(choices)
+    while True:
+        answer = typer.prompt(f"{prompt} [{keys}]").strip().lower()
+        if answer in choices:
+            return choices[answer]
+        typer.echo(f"Answer one of: {keys}")
+
+
+CONCEPT_KEYS = {
+    "n": ConceptState.NOT_MENTIONED,
+    "m": ConceptState.NAME_ONLY,
+    "c": ConceptState.EXPLAINED,
+    "w": ConceptState.WRONG,
+}
+
+
+def _judge_output(name: str, labels: Labels) -> OutputJudgment:
+    typer.secho(f"Judging output {name}", bold=True)
+    concepts = {
+        c.term: ConceptState(
+            _ask(f"  {c.term}: n=not mentioned, m=named only, c=explained, w=wrong", dict(CONCEPT_KEYS))
+        )
+        for c in labels.concepts
+    }
+    takeaway = _ask("  Main takeaway conveyed?", {"y": "y", "n": "n"}) == "y"
+    issues = []
+    typer.echo("  Problems: '<E1|E2|E3|E4> <quoted text>' per line, empty line to finish.")
+    while line := typer.prompt("  ", default="", show_default=False).strip():
+        level, _, text = line.partition(" ")
+        if level.upper() not in Severity.__members__ or not text.strip():
+            typer.echo("  Start with E1, E2, E3 or E4, then the quoted text.")
+            continue
+        issues.append(Issue(severity=Severity(level.upper()), text=text.strip()))
+    return OutputJudgment(concepts=concepts, takeaway_conveyed=takeaway, issues=issues)
+
+
+def _show_pair(dataset: Dataset, pair: PlannedPair, outputs: dict[str, str], title: str) -> Labels:
+    item = next(i for i in dataset.items if i.video_id == pair.video_id)
+    if item.labels is None or not item.labels.concepts or not item.labels.main_takeaway:
+        raise _fail(f"{pair.video_id} needs concept and main-takeaway labels before the blind review")
+    labels = item.labels
+    typer.echo()
+    typer.secho(f"=== {pair.video_id}: {title}", bold=True)
+    typer.echo(f"Main takeaway: {labels.main_takeaway}")
+    typer.echo(f"  evidence: {labels.takeaway_evidence}")
+    typer.echo("Concepts: " + ", ".join(c.term for c in labels.concepts))
+    for name in ("X", "Y"):
+        typer.echo()
+        typer.secho(f"--- Output {name}", bold=True)
+        typer.echo(outputs[name])
+    return labels
+
+
+@eval_app.command("blind")
+def blind_command(
+    run_a: Annotated[str, typer.Argument(help="Current configuration")],
+    run_b: Annotated[str, typer.Argument(help="Candidate configuration")],
+    dataset_path: DatasetPath = DEFAULT_DATASET_PATH,
+    cache_dir: CacheDir = DEFAULT_CACHE_DIR,
+    runs_dir: RunsDir = DEFAULT_RUNS_DIR,
+) -> None:
+    """Review the blind subset without knowing which run wrote which output. Resumable."""
+    from yla.eval.scoring import replay
+
+    dataset = load_dataset(dataset_path)
+    titles = {v.video_id: v.title for v in Cache(cache_dir).all()}
+    try:
+        records = {r: open_run(r, runs_dir).records() for r in (run_a, run_b)}
+    except FileNotFoundError as exc:
+        raise _fail(str(exc)) from exc
+    session = load_session(runs_dir, run_a, run_b) or BlindSession(run_a=run_a, run_b=run_b)
+    matcher = TopicMatcher(dataset.topics)
+    pairs = [
+        p
+        for p in plan_pairs(dataset, run_a, records[run_a], run_b, records[run_b], seed=session.seed)
+        if p.video_id not in session.judged()
+    ]
+    typer.echo(f"{len(session.judged())} reviewed, {len(pairs)} to go.")
+    for pair in pairs:
+        outputs = {}
+        for name, run in (("X", pair.x_run), ("Y", pair.y_run)):
+            record = next(r for r in records[run] if r.video_id == pair.video_id and r.status == "ok")
+            outputs[name] = render_output(replay(record, titles[pair.video_id], matcher).final)
+        labels = _show_pair(dataset, pair, outputs, titles[pair.video_id])
+        x, y = _judge_output("X", labels), _judge_output("Y", labels)
+        preference = Preference(_ask("Which is better?", {"x": "X", "y": "Y", "t": "tie"}))
+        session = record_judgment(session, new_judgment(pair, x, y, preference))
+        save_session(runs_dir, session)
+        typer.echo("Saved.")
+    typer.echo("Blind review complete.")

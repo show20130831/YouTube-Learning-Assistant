@@ -37,12 +37,28 @@ class LabelStatus(StrEnum):
     CONFIRMED = "confirmed"  # checked by a person against the evidence
 
 
+class ConceptLabel(BaseModel):
+    """A concept a good summary must cover. ``term`` appears verbatim in the transcript."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    term: str
+    aliases: list[str] = []  # other names it may be written as, e.g. its Chinese translation
+
+    def names(self) -> list[str]:
+        return [self.term, *self.aliases]
+
+
 class Labels(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     topics: list[str]
     # topic -> a short quote from the transcript that shows the video really discusses it
     evidence: dict[str, str] = Field(default_factory=dict)
+    # Only for videos in the blind review: what a good summary must cover.
+    concepts: list[ConceptLabel] = []
+    main_takeaway: str | None = None
+    takeaway_evidence: str | None = None
     status: LabelStatus = LabelStatus.DRAFT
     notes: str | None = None
 
@@ -70,13 +86,20 @@ class Dataset(BaseModel):
     # Test videos also run with only their title and description (the topic-guess tier, one star),
     # to check the guess rules: speculative wording and at most 3 key points.
     title_only_subset: list[str] = []
+    # Test videos reviewed blind by a person; they also carry concept and main-takeaway labels.
+    blind_subset: list[str] = []
     items: list[Item]
 
     @model_validator(mode="after")
     def _check(self) -> Dataset:
         names = {t.name for t in self.topics}
-        if unknown_ids := set(self.title_only_subset) - {i.video_id for i in self.items}:
-            raise ValueError(f"title_only_subset lists videos not in the dataset: {sorted(unknown_ids)}")
+        ids = {i.video_id for i in self.items}
+        for name, subset in (
+            ("title_only_subset", self.title_only_subset),
+            ("blind_subset", self.blind_subset),
+        ):
+            if unknown_ids := set(subset) - ids:
+                raise ValueError(f"{name} lists videos not in the dataset: {sorted(unknown_ids)}")
         seen: set[str] = set()
         for item in self.items:
             if item.video_id in seen:
