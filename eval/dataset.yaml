@@ -1,11 +1,33 @@
-version: 2026-10-14.mvp
+version: 2026-10-15.mvp
 description: 'MVP dataset. dev: the 9 videos that had transcripts when prompts were tuned (seen, so contaminated;
   development only). test, 2026-10-13: one video per channel drawn with random.Random(20261013) among 3-120 minute
   videos without transcripts. test, 2026-10-14 (appended; earlier labels unchanged): published in 2026 only, drawn
   with random.Random(20261014) within a target length bucket per channel (short <=15 min, medium <=60, long <=120)
-  chosen to fill the buckets the test set lacked. At most 5 caption requests per day.'
+  chosen to fill the buckets the test set lacked. At most 5 caption requests per day. test, 2026-10-15: the remaining
+  14 test videos drawn at once with random.Random(20261015) before any further results, per channel slot and target
+  length bucket (2026 releases only; Karpathy has no 2026 video, so his two remaining slots went to statquest and
+  DeepLearningAI); fetched 5 per day in list order. title_only_subset: 8 test videos drawn with random.Random(202610151)
+  by stratum (4 English auto-caption channels, 1 LangChain, 3 Chinese), run with title and description only. blind_subset:
+  6 test videos of at most 60 minutes drawn with random.Random(202610152) by stratum (3 English auto-caption, 1
+  LangChain, 2 Chinese) for the blind human review; they also get concept and main-takeaway labels.'
 min_description_chars: 150
 topics_file: eval/topics.yaml
+title_only_subset:
+- Yx-ZkLftybY
+- u_9OA3WRHgo
+- GmCbzlb091A
+- ldH50XCGNXg
+- 5kTFyEOgark
+- HQGUed-e2wM
+- Ll-wk8x3G_g
+- s06mSAGN4gM
+blind_subset:
+- GmCbzlb091A
+- KDkR0cJRiJk
+- L3nlGfSyHV0
+- 950byF7njfw
+- fDQaadKysSA
+- KJybu1Y2tyY
 items:
 - video_id: S9DEYEyFrjI
   split: dev
@@ -157,6 +179,23 @@ items:
     status: confirmed
     notes: 'Uncertain: FDR is a statistics method, but the whole video is framed and demonstrated on RNA-seq gene
       expression. Machine Learning not labeled (multiple-testing correction is not ML).'
+    concepts:
+    - term: false positive
+      aliases:
+      - false positives
+      - 偽陽性
+      - 假陽性
+    - term: Benjamini-Hochberg
+      aliases:
+      - BH
+    - term: adjusted P value
+      aliases:
+      - adjusted P values
+      - adjusted p-value
+      - 調整後的 p 值
+      - 校正後的 p 值
+    main_takeaway: 同時檢定大量基因時，即使沒有效果也會有約 5% 出現偽陽性；FDR 用 Benjamini-Hochberg 方法調整 p 值，把看起來顯著的壞資料篩掉。
+    takeaway_evidence: False discovery rates are a tool to weed out bad data that looks good.
 - video_id: pb-AAvvQZ-U
   channel: LangChain
   title: How to go from your agent's traces to a fine-tuned model in one workflow
@@ -194,6 +233,24 @@ items:
     status: confirmed
     notes: 'AI Agent not labeled: agents appear as one example of prompt caching savings. Machine Learning not labeled:
       LLM internals are labeled LLM only.'
+    concepts:
+    - term: KV Cache
+      aliases:
+      - KV 快取
+    - term: Grouped-Query Attention
+      aliases:
+      - GQA
+      - 分組查詢注意力
+    - term: Sliding Window Attention
+      aliases:
+      - 滑動視窗注意力
+    - term: cache hit
+      aliases:
+      - 快取命中
+      - cache input
+    main_takeaway: KV Cache 存下已算過 token 的 Key 與 Value 以免重算，但會大量佔用 GPU 記憶體，所以有減少 KV 的方法（GQA、壓縮、Sliding Window、丟棄少用的
+      KV）；前綴相同時可共用快取，這也是服務商對 cache input 打折的原因。
+    takeaway_evidence: 但是 KV Cache 這個東西 是可以直接撐爆你以為非常大的倉庫的
 - video_id: HQGUed-e2wM
   channel: 馬克的技術工作坊
   title: Codex 从 0 到 1 全攻略 - Annotate / Fork / Archive / Plan / Plugin / Skill / Automation / Mobile ......
@@ -280,3 +337,149 @@ items:
     notes: 'Uncertain: a setup tutorial for running Codex on third-party models (DeepSeek, GLM, Kimi). LLM labeled
       because choosing and connecting the model is the subject; AI Agent not labeled because agent behaviour is
       not discussed. Confirm.'
+- video_id: 5kTFyEOgark
+  split: test
+  channel: LangChain
+  title: How to Build a Model Router in the Harness
+  published_at: '2026-10-06T16:31:25+00:00'
+  duration_seconds: 819
+  labels:
+    topics:
+    - AI Agent
+    - LangChain
+    - LLM
+    evidence:
+      AI Agent: And so if you're building agents that work at scale, this cost can be prohibitive.
+      LangChain: So every time our coding agent runs, it sends a trace to LangSmith that has a record of every step
+        that that agent took.
+      LLM: I have a quote here showing that model providers like Anthropic even recommend starting with smaller
+        models, in this case like Claude Haiku, before graduating to a more intelligent model like Opus
+    status: confirmed
+    notes: 'LLM labeled: choosing models on the cost and intelligence curve is the subject (model routing).'
+- video_id: Ll-wk8x3G_g
+  split: test
+  channel: Hung-yi Lee
+  title: 如何讓 Transformer 知道輸入 Token 的順序？Absolute、Relative、RoPE、到沒有 Positional Embedding
+  published_at: '2026-03-30T04:08:22+00:00'
+  duration_seconds: 5383
+  labels:
+    topics:
+    - LLM
+    evidence:
+      LLM: 我們都知道大型語言模型 它的背後就是一個叫 Transformer 的神經網路架構
+    status: confirmed
+    notes: 'Machine Learning not labeled: positional embeddings are LLM internals (guideline: LLM internals are
+      LLM only). AI Agent not labeled: agents appear only as a motivation for long context.'
+- video_id: u_9OA3WRHgo
+  split: test
+  channel: statquest
+  title: 'Naive Bayes: Concepts and Code'
+  published_at: '2026-09-29T13:29:57+00:00'
+  duration_seconds: 4520
+  labels:
+    topics:
+    - Machine Learning
+    evidence:
+      Machine Learning: So without further ado, we're going to start by learning the theory behind uh a machine
+        learning method called naive bay.
+    status: confirmed
+    notes: 'AI Agent and LLM not labeled: an AI assistant only writes the code during the livestream.'
+- video_id: KDkR0cJRiJk
+  split: test
+  channel: Nick Saraev
+  title: The Viral $1 Website Effect That Looks Like $10K (Tutorial)
+  published_at: '2026-07-29T01:14:37+00:00'
+  duration_seconds: 1373
+  labels:
+    topics:
+    - AI Agent
+    evidence:
+      AI Agent: So long as you guys have an AI agent, you should be good.
+    status: confirmed
+    notes: 'Revised draft (before any run or confirmation): about the last 40% of the video has an AI agent in the
+      Claude desktop app build the site from a prompt, check it in a browser and deploy it to Vercel; the first
+      draft judged from the opening only and labelled no topic. LLM not labeled: image and video models are used,
+      language models are not discussed.'
+    concepts:
+    - term: dithering
+      aliases:
+      - dithered
+      - 抖色
+      - 混色
+    - term: image-to-video model
+      aliases:
+      - image-to-video
+      - 圖片轉影片
+    - term: Vercel
+      aliases: []
+    main_takeaway: 先用圖片生成模型做靜態圖、再用圖片轉影片模型做動畫（先出圖再轉影片品質較好也較省錢），最後把提示詞交給 AI agent 做成抖色風格的網站並部署到 Vercel。
+    takeaway_evidence: when you generate an image before you feed it into a an image-to-video model, the resulting
+      video is really much higher quality
+- video_id: hy8UstR2NEg
+  split: test
+  channel: DeepLearningAI
+  title: 'Full Course: Spec-Driven Development with Coding Agents'
+  published_at: '2026-09-22T19:32:17+00:00'
+  duration_seconds: 3694
+  labels:
+    topics:
+    - AI Agent
+    evidence:
+      AI Agent: Give your coding agent a markdown file or a long prompt explaining exactly what to build and it
+        implements that spec.
+    status: confirmed
+    notes: 'AI Automation not labeled: ''workflow'' here is a development workflow, not automating work with AI.'
+- video_id: 950byF7njfw
+  split: test
+  channel: LangChain
+  title: 'Interrupt NYC: Opening Keynote'
+  published_at: '2026-10-05T12:23:25+00:00'
+  duration_seconds: 1930
+- video_id: dN-WfPb6Njs
+  split: test
+  channel: 馬克的技術工作坊
+  title: 一个视频学会 Git + GitHub：AI 编程必不可少的两个工具
+  published_at: '2026-10-03T09:06:35+00:00'
+  duration_seconds: 6576
+- video_id: Yx-ZkLftybY
+  split: test
+  channel: statquest
+  title: TRIPLE BAM!!! With Josh, Luis and special guest Brandon Rohrer
+  published_at: '2026-08-21T04:09:09+00:00'
+  duration_seconds: 3704
+- video_id: ldH50XCGNXg
+  split: test
+  channel: AssemblyAI
+  title: 'Workshop: Building and optimizing dictation features'
+  published_at: '2026-09-09T18:37:08+00:00'
+  duration_seconds: 2166
+- video_id: m3i2mk5hs8U
+  split: test
+  channel: Hung-yi Lee
+  title: AI 能自我修正嗎？從 decoding、workflow 到 reasoning 的技術發展整理
+  published_at: '2026-04-25T12:45:54+00:00'
+  duration_seconds: 5262
+- video_id: KJybu1Y2tyY
+  split: test
+  channel: 馬克的技術工作坊
+  title: 我的 AI 编程全流程：如何使用 AI 稳定交付一个高质量的产品
+  published_at: '2026-08-29T11:36:30+00:00'
+  duration_seconds: 1495
+- video_id: mIlw5j3WyVk
+  split: test
+  channel: statquest
+  title: 'StatQuest: Random Forests Part 2: Missing data and clustering'
+  published_at: '2026-06-08T15:02:05+00:00'
+  duration_seconds: 648
+- video_id: GmCbzlb091A
+  split: test
+  channel: Nick Saraev
+  title: I Uploaded A Fruit Fly Brain To Reply To My Emails
+  published_at: '2026-09-13T12:30:24+00:00'
+  duration_seconds: 760
+- video_id: Y_bxMqcCNbU
+  split: test
+  channel: DeepLearningAI
+  title: AI Dev | San Francisco 2026 | 2,599 AI Developers
+  published_at: '2026-09-01T21:18:23+00:00'
+  duration_seconds: 218
