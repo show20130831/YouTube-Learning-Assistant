@@ -39,7 +39,7 @@ CAPTION_ERROR_RUNS = 2
 QUALITY_WINDOW = timedelta(days=7)
 QUALITY_MIN_ANALYSES = 4
 RULE_CHECK_WINDOW = timedelta(days=1)
-DRIFT_CHECK_WINDOW = timedelta(days=8)  # the check runs weekly; its warning stays until the next one
+DRIFT_CHECK_WINDOW = timedelta(days=8)  # weekly check plus a day of slack
 # "Topic outside the list" is guaranteed when an analysis is made, but the list can change since
 # (a topic removed from settings.yaml), so it is shown by ``yla metrics`` but not alerted on.
 ALERT_ON = GUARANTEED_BY_RULES - {"topic outside the list"}
@@ -160,22 +160,48 @@ def _rule_violations(session: Session, user: User, now: datetime) -> list[str]:
 
 
 def _model_drift(session: Session, now: datetime) -> list[str]:
-    """The weekly drift check (``yla eval drift``) found the primary model changed."""
-    stats = session.scalars(
-        select(JobRun.stats)
-        .where(
-            JobRun.job_name == "eval_drift",
-            JobRun.status == JobStatus.SUCCEEDED,
-            JobRun.started_at >= now - DRIFT_CHECK_WINDOW,
-        )
+    """Warnings from the weekly drift check (``yla eval drift``).
+
+    Derived from its job runs on every digest, never stored: a drift warning shows while the latest
+    completed check found drift and disappears as soon as a later check is stable. A check stopped
+    by the quota, skipped or failed does not count as done; if none completed for longer than the
+    window, that is a warning too, so a check that silently stopped running cannot look like
+    "no drift". Nothing is said before the first check ever ran (the weekly task not set up yet).
+    """
+    jobs = session.execute(
+        select(JobRun.started_at, JobRun.status, JobRun.stats)
+        .where(JobRun.job_name == "eval_drift")
         .order_by(JobRun.id.desc())
-        .limit(1)
-    ).first()
-    if not stats or not stats.get("drifted"):
+        .limit(30)
+    ).all()
+    if not jobs:
         return []
-    return [
-        "⚠️ 每週漂移檢查：主模型的表現和基準不同（"
-        + "；".join(stats.get("reasons") or [])
-        + "），模型可能已在同一名稱下更換，請查看 eval/runs/"
-        + f"{stats.get('run_id')}/drift.md。"
-    ]
+    completed = next(
+        (
+            (started, stats)
+            for started, status, stats in jobs
+            if status is JobStatus.SUCCEEDED and stats.get("outcome") in ("stable", "drifted")
+        ),
+        None,
+    )
+    warnings = []
+    if completed is None or now - completed[0] > DRIFT_CHECK_WINDOW:
+        _, status, stats = jobs[0]
+        last = (
+            "上次執行失敗"
+            if status is JobStatus.FAILED
+            else {
+                "skipped": "上次因主模型或 prompt 已更換而跳過，需在 eval/drift.yaml 設定新的基準",
+                "incomplete": "上次被免費額度擋下而未完成",
+            }.get(stats.get("outcome"), "上次執行沒有完成")
+        )
+        when = "從未完成" if completed is None else f"已 {(now - completed[0]).days} 天沒有完成"
+        warnings.append(f"⚠️ 每週漂移檢查{when}（{last}），請確認每週排程與電腦是否開機。")
+    elif completed[1].get("outcome") == "drifted":
+        stats = completed[1]
+        reasons = "；".join([*stats.get("identity", []), *stats.get("quality", [])])
+        warnings.append(
+            f"⚠️ 每週漂移檢查：主模型和基準不同（{reasons}），模型可能已在同一名稱下更換，"
+            f"請查看 eval/runs/{stats.get('run_id')}/drift.md。"
+        )
+    return warnings

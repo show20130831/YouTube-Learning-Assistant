@@ -37,7 +37,13 @@ from yla.eval.dataset import (
     Labels,
     load_dataset,
 )
-from yla.eval.drift import DEFAULT_DRIFT_CONFIG, compare_for_drift, load_drift_config, render_drift
+from yla.eval.drift import (
+    DEFAULT_DRIFT_CONFIG,
+    compare_for_drift,
+    load_drift_config,
+    render_drift,
+    thresholds_from_aa,
+)
 from yla.eval.fetch import VideoInfo, fill_cache
 from yla.eval.report import build_report, load_run
 from yla.eval.runner import Record, create_run, new_meta, open_run, run_dataset
@@ -343,7 +349,15 @@ def drift_command(
     titles = {v.video_id: v.title for v in Cache(cache_dir).all()}
     try:
         reference = load_run(open_run(config.reference_run, runs_dir), dataset, titles)
-    except FileNotFoundError as exc:
+        aa_runs = [
+            (
+                load_run(open_run(a, runs_dir), dataset, titles),
+                load_run(open_run(b, runs_dir), dataset, titles),
+            )
+            for a, b in config.aa_pairs
+        ]
+        thresholds = thresholds_from_aa(aa_runs)
+    except (FileNotFoundError, ValueError) as exc:
         raise _fail(str(exc)) from exc
     engine = make_engine(secrets.database_url.get_secret_value())
     with session_scope(engine) as session:
@@ -364,7 +378,7 @@ def drift_command(
             f"{reference.meta.prompt_version}; production uses {primary} / {PROMPT_VERSION}: "
             "set a new reference"
         )
-        finish(JobStatus.SUCCEEDED, {"completed": False, "skipped": message})
+        finish(JobStatus.SUCCEEDED, {"outcome": "skipped", "completed": False, "skipped": message})
         typer.secho(f"Skipped: {message}", fg=typer.colors.YELLOW)
         return
 
@@ -376,25 +390,28 @@ def drift_command(
             run = create_run(meta, runs_dir)
             summary = run_dataset(run, dataset, Cache(cache_dir), client, only=set(reference.score.scores))
         current = load_run(run, dataset, titles)
-        result = compare_for_drift(reference, current, margin=config.margin)
+        result = compare_for_drift(reference, current, thresholds=thresholds)
     except Exception as exc:
         finish(JobStatus.FAILED, {"run_id": run_id}, f"{type(exc).__name__}: {exc}"[:2000])
         raise
     completed = not summary.stopped_on_rate_limit
-    report = render_drift(result, config)
+    report = render_drift(result)
     (run.root / "drift.md").write_text("\n".join(report) + "\n", encoding="utf-8")
     finish(
         JobStatus.SUCCEEDED,
         {
             "run_id": run_id,
+            # an incomplete check (stopped by the quota) raises no alert and does not count as done
+            "outcome": result.outcome.value if completed else "incomplete",
             "completed": completed,
             "compared": result.compared,
-            "drifted": result.drifted and completed,
-            "reasons": result.reasons,
-            "notes": result.notes,
+            "identity": result.identity,
+            "quality": result.quality,
+            "environment": result.environment,
             "delta_f1": result.f1.estimate if result.f1 else None,
             "delta_precision": result.precision.estimate if result.precision else None,
-            "margin": config.margin,
+            "f1_threshold": thresholds.f1,
+            "precision_threshold": thresholds.precision,
         },
     )
     for line in report:

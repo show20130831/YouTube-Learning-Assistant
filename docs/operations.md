@@ -37,11 +37,17 @@ Persistent problems reported in the digest:
 | Mostly topic guesses | More than half of the last 7 days' summaries (at least 4) had no captions |
 | Answered by another model | In the last pipeline run, OpenRouter answered a model ID with a different model |
 | Rule problems left in outputs | A summary from the last day still has a problem the post-processing rules remove (half-width gloss, wrapping quotes, too many key points, and so on) |
-| Model drift | The weekly drift check found a different model answering, or final-topic F1 or precision moved by more than the A/A margin |
+| Model drift | The latest completed weekly drift check found identity drift (another model answering) or quality drift (final-topic F1 or precision moved beyond its threshold) |
+| Drift check overdue | No drift check completed in 8 days (computer off, check stopped by the quota, skipped because the reference is outdated, or failed); the warning says which |
 
 Cloud feed failures alone are not reported: the cloud read is only a backup for the worker and fails routinely.
 
-The last two are invariants, not trends: one occurrence is enough. Latency, failure rates and the number of
+Drift warnings are derived from the drift check's job runs on every digest, not stored: a drift warning
+disappears as soon as a later check is stable, and nothing is written twice. A provider change alone
+("execution environment changed") is shown in the drift report's title but not alerted on: free models move
+between providers routinely, and if it matters it shows up as quality drift.
+
+"Answered by another model" and "rule problems" are invariants, not trends: one occurrence is enough. Latency, failure rates and the number of
 topics per video are not alerted on, because with 1-5 videos a day no threshold could be justified; `yla metrics`
 shows them as trends instead.
 
@@ -134,14 +140,25 @@ Run `uv run yla health` once a week, and after any change to settings, keys or c
 ### "每週漂移檢查：主模型的表現和基準不同" (model drift)
 
 - **Cause:** the model behind the configured ID changed (a new version, a reroute), so the same inputs now get
-  different topics. The margin (`eval/drift.yaml`) is the largest difference identical runs produced, so this is
-  more than run-to-run noise has shown.
+  different topics. The thresholds are computed on every check from the A/A pairs in `eval/drift.yaml`
+  (for F1 and for precision, the largest 95% CI bound of the difference between two identical runs), so this
+  is more than run-to-run noise has shown so far. They are provisional: add A/A pairs as more runs are made.
+- **Scope:** the check compares outputs for the same videos. It cannot detect a shift in the inputs (new
+  channels or new kinds of videos); for that, extend the evaluation dataset.
 - **Check:** read `eval/runs/<run>/drift.md`, then compare in full with
   `uv run yla eval report <reference run> <drift run> --no-blind`.
 - **Decide:** if quality dropped, evaluate another model (see "Primary model unreliable"); if it improved or
   only changed, run the blind review before trusting it.
 - **After any change of primary model or prompt:** make a new full run, set it as `reference_run` in
-  `eval/drift.yaml`; until then the check skips itself and records why.
+  `eval/drift.yaml`, and replace the A/A pairs with runs of the new configuration; until then the check skips
+  itself, and after 8 days the digest says the check is overdue and why.
+
+### "每週漂移檢查已 N 天沒有完成" (drift check overdue)
+
+- **Check:** `uv run yla status --days 10` and the end of `logs/drift.log`. The warning names the last result.
+- **Fix:** computer off or asleep without wake timers: run it now with
+  `Start-ScheduledTask -TaskName "YouTube Learning Assistant - drift check"`. Stopped by the quota: run
+  `uv run yla eval drift` again after 08:00 the next day (it resumes). Skipped: set a new reference (above).
 
 ### Cloud settings differ from settings.yaml
 

@@ -1,9 +1,10 @@
-# Weekly drift check (yla eval drift): the primary model re-run against a reference run of the same
-# model, prompt and rules. See src/yla/eval/drift.py.
+# Weekly drift check (yla eval drift). See src/yla/eval/drift.py.
+# The primary model is re-run on the videos this run answered and compared with it.
 reference_run: 20261013-nemotron-3-super-120b-a12b
-# Larger than any difference identical runs have produced: the largest 95% CI bound of final-topic
-# micro-F1 in the A/A comparisons. Re-estimate it as A/A runs accumulate.
-margin: 0.098
-margin_source: >-
-  largest 95% CI bound of final-topic micro-F1 in three A/A comparisons of the production model
-  (runs of 2026-10-13, 10-14 and 10-15)
+# Runs of the same model, prompt and rules. On every check the thresholds are computed from these
+# pairs: for F1 and for precision, the largest 95% CI bound of their difference. Add pairs as new A/A
+# runs are made; the thresholds are provisional until there are more.
+aa_pairs:
+  - [20261013-nemotron-3-super-120b-a12b, 20261014-nemotron-3-super-120b-a12b]
+  - [20261013-nemotron-3-super-120b-a12b, 20261015-nemotron-3-super-120b-a12b]
+  - [20261014-nemotron-3-super-120b-a12b, 20261015-nemotron-3-super-120b-a12b]
