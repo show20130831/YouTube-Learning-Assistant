@@ -183,7 +183,7 @@ Run `uv run yla health` once a week, and after any change to settings, keys or c
 |---|---|
 | Rerun today's analysis in the cloud | `uv run modal run src/yla/modal_app.py::daily_pipeline --skip-discover` |
 | Preview today's digest from the cloud | `uv run modal run src/yla/modal_app.py::send_digest --dry-run` |
-| Deploy code or settings changes | `uv run modal deploy src/yla/modal_app.py` |
+| Deploy code or settings changes | `uv run modal deploy src/yla/modal_app.py`. On Windows, if it stops with a `'cp950' codec can't encode` error (the Modal CLI printing ✓ to a Traditional Chinese console), set `PYTHONUTF8=1` first: `$env:PYTHONUTF8 = "1"` in PowerShell |
 | Apply database migrations | `uv run alembic upgrade head` (uses `DATABASE_URL`). Run it **before** deploying code that needs the new schema; new tables are unused by the old code, so this order is always safe |
 | Update keys in the cloud after editing `.env` | `uv run modal secret create yla-secrets --from-dotenv .env --force` |
 | Change channels or topics | Edit `config/settings.yaml`, then `uv run yla validate-config`, `uv run yla sync-config`, and deploy |
