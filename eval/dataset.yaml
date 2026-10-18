@@ -435,30 +435,89 @@ items:
   title: 'Interrupt NYC: Opening Keynote'
   published_at: '2026-10-05T12:23:25+00:00'
   duration_seconds: 1930
+  labels:
+    topics:
+    - AI Agent
+    - LangChain
+    evidence:
+      AI Agent: And so there's this life cycle, this loop that people are adopting in order to really get agents
+        to be good enough.
+      LangChain: And so we're really, really excited about the Managed Deep Agents platform as a way to accelerate
+        time to value and speed to kind of like production for a lot of these agents.
+    concepts:
+    - term: owning your intelligence
+      aliases:
+      - own your intelligence
+      - 擁有自己的智慧
+      - 掌握自己的智慧
+    - term: harness
+      aliases:
+      - Harness
+    - term: Managed Deep Agents
+      aliases: []
+    - term: LLM Gateway
+      aliases:
+      - LLM 閘道
+    main_takeaway: 企業要「擁有自己的智慧」：在模型周圍打造領域專屬的部分，靠三大支柱——不綁定特定模型的開放 harness、把使用中學到的東西帶回開發的迭代循環（build、test、deploy、monitor），以及對內部
+      agent 的治理；LangSmith 為此推出 Managed Deep Agents、LLM Gateway、Trajectories 與 Engine v2 等功能。
+    takeaway_evidence: And so this is how we think about the three core pillars of owning intelligence.
+    status: confirmed
+    notes: 'LangGraph not labeled: named once as one way to build a custom harness. LLM not labeled: the LLM Gateway
+      section is about a LangSmith product for managing model providers; borderline. Confirm.'
 - video_id: dN-WfPb6Njs
   split: test
   channel: 馬克的技術工作坊
   title: 一个视频学会 Git + GitHub：AI 编程必不可少的两个工具
   published_at: '2026-10-03T09:06:35+00:00'
   duration_seconds: 6576
+  labels:
+    topics: []
+    evidence: {}
+    status: confirmed
+    notes: 'No topic: a Git and GitHub tutorial; AI coding is only the motivation in the introduction.'
 - video_id: Yx-ZkLftybY
   split: test
   channel: statquest
   title: TRIPLE BAM!!! With Josh, Luis and special guest Brandon Rohrer
   published_at: '2026-08-21T04:09:09+00:00'
   duration_seconds: 3704
+  labels:
+    topics:
+    - Machine Learning
+    evidence:
+      Machine Learning: Um started studying more like developing my own like machine learning algorithms.
+    status: confirmed
+    notes: 'A live interview; machine learning (neural networks, reinforcement learning, gradient descent, explaining
+      ML) runs through it. LLM not labeled: mentioned in passing.'
 - video_id: ldH50XCGNXg
   split: test
   channel: AssemblyAI
   title: 'Workshop: Building and optimizing dictation features'
   published_at: '2026-09-09T18:37:08+00:00'
   duration_seconds: 2166
+  labels:
+    topics:
+    - LLM
+    evidence:
+      LLM: The way you would do this today with assembly AI is that you are going to go ahead and call um our LLM
+        gateway.
+    status: confirmed
+    notes: 'Uncertain: building dictation with a speech-to-text API; one chapter prompts an LLM to clean up the
+      transcript, labeled LLM for that chapter. AI Agent not labeled: agents only as a use case. Confirm.'
 - video_id: m3i2mk5hs8U
   split: test
   channel: Hung-yi Lee
   title: AI 能自我修正嗎？從 decoding、workflow 到 reasoning 的技術發展整理
   published_at: '2026-04-25T12:45:54+00:00'
   duration_seconds: 5262
+  labels:
+    topics:
+    - LLM
+    evidence:
+      LLM: 那今天這堂課要講的是 self-correction 我們要來講說這些語言模型有沒有自我修正的能力
+    status: confirmed
+    notes: 'Machine Learning not labeled: the training methods are specific to language models (guideline). AI Agent
+      not labeled: the workflow part is about reasoning workflows such as reflection, not agents using tools.'
 - video_id: KJybu1Y2tyY
   split: test
   channel: 馬克的技術工作坊
